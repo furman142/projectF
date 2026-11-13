@@ -188,9 +188,34 @@ export class TableView {
     for (const seat of this.seats.values()) seat.classList.remove('is-ready');
   }
 
-  markResult(caller: PlayerId, loser: PlayerId): void {
-    this.seats.get(caller)?.classList.add('is-caller');
-    this.seats.get(loser)?.classList.add('is-loser');
+  /** Turns the caller's and loser's cards face up on the table. */
+  markResult(round: RoundState, caller: PlayerId, loser: PlayerId): void {
+    for (const [id, cls] of [[caller, 'is-caller'], [loser, 'is-loser']] as const) {
+      const seat = this.seats.get(id);
+      if (!seat) continue;
+      seat.classList.add(cls);
+      const fan = seat.querySelector<HTMLElement>('.seat__fan')!;
+      const cards = sortHand(round.hands[id]);
+      fan.className = 'seat__fan is-revealed';
+      fan.replaceChildren(
+        ...cards.map((card, i) => {
+          const el = cardFace(card);
+          el.style.setProperty('--rot', `${(i - (cards.length - 1) / 2) * 9}deg`);
+          el.style.setProperty('--i', String(i));
+          return el;
+        }),
+      );
+    }
+    if (loser === this.humanId) this.me.classList.add('is-caught');
+  }
+
+  /** Centre of a player's area as a 0..1 fraction of the screen, for effects. */
+  originOf(id: PlayerId): { x: number; y: number } {
+    const el = id === this.humanId ? this.hand : this.seats.get(id);
+    const box = this.el.getBoundingClientRect();
+    if (!el) return { x: 0.5, y: 0.5 };
+    const r = el.getBoundingClientRect();
+    return { x: (r.left + r.width / 2 - box.left) / box.width, y: (r.top + r.height / 2 - box.top) / box.height };
   }
 
   renderHand(round: RoundState, opts: { dealing?: boolean; hiddenId?: string } = {}): void {
@@ -218,6 +243,7 @@ export class TableView {
 
     const joker = round.hands[this.humanId].some((c) => c.kind === 'joker');
     this.me.classList.toggle('has-joker', joker);
+    this.me.classList.remove('is-caught');
     const state = !joker ? 'none' : locked ? 'locked' : 'free';
     if (this.chipSlot.dataset.state !== state) {
       this.chipSlot.dataset.state = state;

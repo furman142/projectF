@@ -496,3 +496,121 @@
 .scores .letters {
   font-size: 15px;
 }
+
+/* ---------- Home atmosphere ---------- */
+
+.home__suits {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  mask-image: linear-gradient(180deg, transparent 0%, #000 25%, #000 60%, transparent 92%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 25%, #000 60%, transparent 92%);
+}
+
+.home__suits span {
+  position: absolute;
+  bottom: -40px;
+  color: rgba(244, 207, 122, 0.16);
+  animation: suit-drift linear infinite;
+}
+
+.home__suits span.is-red {
+  color: rgba(255, 110, 130, 0.16);
+}
+
+.home__suits .suit {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+@keyframes suit-drift {
+  from {
+    transform: translateY(0) rotate(0deg);
+  }
+  to {
+    transform: translateY(-110vh) rotate(200deg);
+  }
+}
+
+.home__hero,
+.home__menu {
+  position: relative;
+}
+
+/* Halo behind the hero cards. */
+.home__cards::before {
+  content: '';
+  position: absolute;
+  inset: -30% -20%;
+  background: radial-gradient(closest-side, rgba(244, 207, 122, 0.3), rgba(138, 92, 255, 0.14) 55%, transparent 75%);
+  animation: halo 4s ease-in-out infinite alternate;
+}
+
+@keyframes halo {
+  from {
+    opacity: 0.6;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+
+/* Cards bob gently once they have landed. */
+.home__cards .card {
+  animation:
+    hero-card 0.9s var(--ease-spring) both,
+    hero-float 4.5s ease-in-out 1.3s infinite alternate;
+}
+
+.home__cards .card:nth-child(2) {
+  animation-delay: 0.2s, 1.9s;
+}
+
+.home__cards .card:nth-child(3) {
+  animation-delay: 0.35s, 1.6s;
+}
+
+@keyframes hero-float {
+  to {
+    translate: 0 calc(var(--u) * -2.2);
+  }
+}
+
+.home__title {
+  position: relative;
+}
+
+/* Sheets: a gold hairline that glints along the top edge. */
+.sheet::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 12%;
+  right: 12%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--gold-hi), transparent);
+  opacity: 0.9;
+}
+
+.result--win .result__title {
+  background: linear-gradient(180deg, #fff6d6 10%, var(--gold) 55%, var(--gold-lo) 95%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 2px 0 rgba(70, 42, 4, 0.9));
+}
+
+.scores li {
+  animation: status-swap 0.4s var(--ease-out) both;
+}
+
+.scores li:nth-child(1) { animation-delay: 0.1s; }
+.scores li:nth-child(2) { animation-delay: 0.16s; }
+.scores li:nth-child(3) { animation-delay: 0.22s; }
+.scores li:nth-child(4) { animation-delay: 0.28s; }
+.scores li:nth-child(5) { animation-delay: 0.34s; }
+.scores li:nth-child(6) { animation-delay: 0.4s; }

@@ -1,6 +1,6 @@
 import { PENALTY_WORD, isEliminated } from '../game/score';
 import type { Card, MatchState, PlayerId } from '../game/types';
-import { cardFace } from './card';
+import { cardFace, suitSvg } from './card';
 import { h, ICONS } from './dom';
 import type { Settings } from './storage';
 import { avatarEl, lettersEl, sortHand } from './table';
@@ -22,9 +22,22 @@ export function homeScreen(settings: Settings, handlers: HomeHandlers): HTMLElem
     { id: 'K-hearts', kind: 'normal', rank: 'K', suit: 'hearts' },
     { id: 'joker', kind: 'joker' },
   ];
+  // Suits drifting up behind the logo. Fixed values so the layout is stable.
+  const drift = [
+    [8, 0, 26, 13], [22, 5, 16, 17], [36, 2, 34, 15], [52, 7, 18, 19], [66, 1, 30, 14],
+    [80, 4, 20, 16], [92, 8, 26, 18], [15, 10, 14, 21], [45, 12, 22, 20], [74, 11, 16, 22],
+  ];
+  const suits = ['spades', 'hearts', 'clubs', 'diamonds'] as const;
   return h(
     'main',
     { class: 'screen home' },
+    h(
+      'div',
+      { class: 'home__suits', 'aria-hidden': 'true' },
+      ...drift.map(([x, delay, size, dur], i) =>
+        h('span', { class: i % 2 ? 'is-red' : '', style: `left:${x}%;width:${size}px;animation-delay:-${delay}s;animation-duration:${dur}s`, html: suitSvg(suits[i % 4]) }),
+      ),
+    ),
     h(
       'div',
       { class: 'home__hero' },

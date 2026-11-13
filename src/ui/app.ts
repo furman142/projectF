@@ -5,6 +5,7 @@ import { canCall, hasJoker, isJokerLocked, playersWhoCanCall, rightOf } from '..
 import { createMatch, isEliminated, matchWinner } from '../game/score';
 import type { Card, MatchState, PlayerId, RoundState } from '../game/types';
 import { wait } from './dom';
+import { confetti, shake } from './fx';
 import { gameOverBody, homeScreen, openSheet, pauseBody, roundEndBody, rulesBody, settingsBody, type Sheet } from './screens';
 import { setSoundEnabled, sfx, vibrate } from './sound';
 import { loadSettings, saveSettings, type Settings } from './storage';
@@ -32,6 +33,7 @@ export class App {
   private timers = new Set<number>();
   private pendingCallers = new Set<PlayerId>();
   private paused = false;
+  private wasLocked = false;
   private deferred: (() => void)[] = [];
   private installPrompt: InstallPromptEvent | null = null;
 
@@ -42,7 +44,22 @@ export class App {
       this.installPrompt = e as InstallPromptEvent;
       if (this.phase === 'idle' && !this.root.querySelector('.backdrop')) this.showHome();
     });
+    // Every plain button gets a click; game actions play their own sounds.
+    root.addEventListener('pointerdown', (e) => {
+      const target = (e.target as HTMLElement).closest('.btn, .icon-btn, .segmented button, .switch-row');
+      if (target && !target.matches(':disabled, .btn--pass, .btn--call')) sfx.click();
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) sfx.heartbeat(false);
+      else this.syncHeartbeat();
+    });
     this.showHome();
+  }
+
+  /** The heartbeat plays only while you are choosing with the Joker in hand. */
+  private syncHeartbeat(): void {
+    const tense = this.phase === 'choosing' && !this.paused && !!this.match?.round && hasJoker(this.round.hands[HUMAN]);
+    sfx.heartbeat(tense);
   }
 
   // ---------- Screens ----------
@@ -56,6 +73,7 @@ export class App {
     this.phase = 'idle';
     this.match = null;
     this.view = null;
+    this.syncHeartbeat();
     this.setScreen(
       homeScreen(this.settings, {
         onPlay: () => {
@@ -80,10 +98,11 @@ export class App {
     saveSettings(this.settings);
     setSoundEnabled(this.settings.sound);
     this.view?.setSound(this.settings.sound);
-    if (patch.sound) sfx.tap();
+    this.syncHeartbeat();
   }
 
   private showSettings(): void {
+    sfx.sheet();
     const done = () => void sheet.close().then(() => this.showHome());
     const sheet: Sheet = openSheet(this.root, {
       title: 'הגדרות',
@@ -93,6 +112,7 @@ export class App {
   }
 
   private showRules(after?: () => void): void {
+    sfx.sheet();
     const sheet: Sheet = openSheet(this.root, {
       title: 'איך משחקים',
       body: rulesBody(() => void sheet.close().then(after)),
@@ -103,9 +123,12 @@ export class App {
   private showPause(): void {
     if (this.paused) return;
     this.paused = true;
+    this.syncHeartbeat();
+    sfx.sheet();
     const resume = () => {
       this.paused = false;
       for (const fn of this.deferred.splice(0)) fn();
+      this.syncHeartbeat();
     };
     const sheet: Sheet = openSheet(this.root, {
       title: 'הפסקה',
@@ -178,8 +201,10 @@ export class App {
     view.renderHand(this.round, { dealing: true });
     view.setActions({ canPass: false, canCall: false });
     view.setStatus('מחלקים קלפים…');
+    this.syncHeartbeat();
+    sfx.shuffle();
     sfx.deal(this.round.hands[HUMAN].length);
-    this.later(950, () => {
+    this.later(1100, () => {
       if (hasJoker(this.round.hands[HUMAN])) this.announceJoker();
       this.beginTurn();
     });
@@ -221,9 +246,15 @@ export class App {
     for (const id of round.order) {
       if (id === HUMAN) continue;
       this.later(between(450, 1900), () => {
-        if (this.phase === 'choosing') view.setReady(id, true);
+        if (this.phase !== 'choosing') return;
+        view.setReady(id, true);
+        sfx.botReady();
       });
     }
+    // Tell the player the moment a held Joker becomes passable again.
+    if (hasJoker(mine) && this.wasLocked && !isJokerLocked(round, HUMAN)) sfx.unlock();
+    this.wasLocked = isJokerLocked(round, HUMAN);
+    this.syncHeartbeat();
   }
 
   private tapCard(cardId: string): void {
@@ -263,6 +294,7 @@ export class App {
     }
 
     this.phase = 'passing';
+    this.syncHeartbeat();
     this.clearTimers();
     for (const id of prev.order) view.setReady(id, true);
     view.setActions({ canPass: false, canCall: false });
@@ -304,17 +336,23 @@ export class App {
     const { loser } = this.round.result!;
     const name = (id: PlayerId) => match.players.find((p) => p.id === id)!.name;
 
+    this.syncHeartbeat();
     view.setActions({ canPass: false, canCall: false });
     view.setSelection(null);
-    view.markResult(caller, loser);
+    view.markResult(this.round, caller, loser);
     view.setStatus(caller === HUMAN ? 'רביעייה שלכם!' : `רביעייה של ${name(caller)}!`);
     if (loser === HUMAN) {
       sfx.lose();
       vibrate([120, 60, 220]);
+      shake(view.el);
     } else {
       sfx.call();
       vibrate(caller === HUMAN ? [40, 40, 40, 40, 160] : 60);
+      confetti(view.el, { palette: 'gold', count: caller === HUMAN ? 90 : 40, origin: view.originOf(caller), power: caller === HUMAN ? 15 : 9 });
     }
+    // Let the face-up cards on the table register before the big flash.
+    await wait(750);
+    if (this.view !== view) return;
     await view.burst(
       'רביעייה!',
       caller === HUMAN ? 'הכרזתם בזמן' : loser === HUMAN ? `${name(caller)} · והג׳וקר אצלכם` : name(caller),
@@ -329,6 +367,19 @@ export class App {
     const match = this.match!;
     const me = match.players.find((p) => p.id === HUMAN)!;
     const finished = isEliminated(me) || matchWinner(match) !== null;
+    const { caller, loser } = match.round!.result!;
+    const loserOut = isEliminated(match.players.find((p) => p.id === loser)!);
+    sfx.sheet();
+    if (caller === HUMAN) {
+      sfx.roundWin();
+      confetti(this.root, { origin: { x: 0.5, y: 0.35 } });
+    }
+    // Timed to the letter popping onto the scoreboard.
+    this.later(700, () => {
+      sfx.stamp();
+      vibrate(30);
+      if (loserOut) this.later(350, () => sfx.eliminated());
+    });
     const sheet: Sheet = openSheet(this.root, {
       body: roundEndBody(match, HUMAN, finished ? 'לתוצאות' : 'סיבוב הבא', () => {
         sfx.tap();
@@ -340,7 +391,16 @@ export class App {
   private showGameOver(): void {
     const match = this.match!;
     const won = matchWinner(match)?.id === HUMAN;
-    if (won) sfx.win();
+    sfx.sheet();
+    if (won) {
+      sfx.win();
+      confetti(this.root, { count: 160, origin: { x: 0.5, y: 0.3 }, power: 17 });
+      this.later(700, () => confetti(this.root, { count: 120, origin: { x: 0.2, y: 0.4 } }));
+      this.later(1300, () => confetti(this.root, { count: 120, origin: { x: 0.8, y: 0.4 } }));
+      vibrate([60, 60, 60, 60, 200]);
+    } else {
+      sfx.gameOver();
+    }
     const sheet: Sheet = openSheet(this.root, {
       body: gameOverBody(match, HUMAN, won, {
         onAgain: () => void sheet.close().then(() => this.startMatch()),
