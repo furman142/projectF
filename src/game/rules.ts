@@ -1,5 +1,5 @@
-import { fourOfAKindRank } from './deck';
-import type { Card, PlayerId, RoundState } from './types';
+import { fourOfAKindRank, RANKS } from './deck';
+import type { Card, PlayerId, Rank, RoundState } from './types';
 
 export function hasJoker(hand: readonly Card[]): boolean {
   return hand.some((c) => c.kind === 'joker');
@@ -29,9 +29,48 @@ export function isJokerLocked(round: RoundState, id: PlayerId): boolean {
   return round.jokerLockedFor === id && hasJoker(round.hands[id]);
 }
 
-/** Cards this player may pass right now (everything except a locked Joker). */
+/** Ranks that are in the deck for this round (one per player). */
+export function ranksInPlay(round: RoundState): Rank[] {
+  return RANKS.slice(0, round.order.length);
+}
+
+/** Each player may ask their right-hand neighbour for a rank once per round. */
+export function canRequest(round: RoundState, id: PlayerId): boolean {
+  return !round.result && round.order.includes(id) && !round.requestsUsed.includes(id);
+}
+
+/**
+ * Ask the player on your right (the one who passes to you) for a rank. If
+ * they hold a card of that rank they must pass it on this turn.
+ */
+export function requestCard(round: RoundState, id: PlayerId, rank: Rank): RoundState {
+  if (!canRequest(round, id)) throw new Error(`${id} has no request left this round`);
+  if (!ranksInPlay(round).includes(rank)) throw new Error(`${rank} is not in play`);
+  return {
+    ...round,
+    requests: { ...round.requests, [id]: rank },
+    requestsUsed: [...round.requestsUsed, id],
+  };
+}
+
+/**
+ * The rank this player is obliged to pass this turn: their left-hand
+ * neighbour asked for it and they hold it. Null if there is no such duty.
+ */
+export function forcedRank(round: RoundState, id: PlayerId): Rank | null {
+  const rank = round.requests[leftOf(round, id)];
+  if (!rank) return null;
+  return round.hands[id].some((c) => c.kind === 'normal' && c.rank === rank) ? rank : null;
+}
+
+/**
+ * Cards this player may pass right now. A requested rank they hold must be
+ * passed; otherwise anything goes except a locked Joker.
+ */
 export function legalPasses(round: RoundState, id: PlayerId): Card[] {
   if (round.result) return [];
+  const forced = forcedRank(round, id);
+  if (forced) return round.hands[id].filter((c) => c.kind === 'normal' && c.rank === forced);
   const locked = isJokerLocked(round, id);
   return round.hands[id].filter((c) => !(locked && c.kind === 'joker'));
 }
@@ -48,8 +87,13 @@ export function applyPasses(round: RoundState, passes: Record<PlayerId, string>)
     const card = legalPasses(round, id).find((c) => c.id === cardId);
     if (!card) {
       const held = round.hands[id].some((c) => c.id === cardId);
+      const forced = forcedRank(round, id);
       throw new Error(
-        held ? `${id} must hold the Joker for one round` : `${id} cannot pass ${cardId ?? '(nothing)'}`,
+        !held
+          ? `${id} cannot pass ${cardId ?? '(nothing)'}`
+          : forced
+            ? `${id} must pass the requested ${forced}`
+            : `${id} must hold the Joker for one round`,
       );
     }
     outgoing.set(id, card);
@@ -66,7 +110,7 @@ export function applyPasses(round: RoundState, passes: Record<PlayerId, string>)
     hands[to].push(card);
     if (card.kind === 'joker') jokerLockedFor = to;
   }
-  return { ...round, hands, jokerLockedFor, turn: round.turn + 1 };
+  return { ...round, hands, jokerLockedFor, requests: {}, turn: round.turn + 1 };
 }
 
 /**

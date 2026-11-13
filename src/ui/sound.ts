@@ -131,6 +131,28 @@ export const sfx = {
     snap(0.6, 0.1);
     snap(0.66, 0.07);
   },
+  /** Someone asks a neighbour for a card: a short questioning "hm-hmm?". */
+  ask: () =>
+    play([
+      { freq: 520, dur: 0.09, type: 'triangle', gain: 0.08 },
+      { freq: 520, to: 830, at: 0.11, dur: 0.16, type: 'triangle', gain: 0.09 },
+    ]),
+  /** A request is aimed at you and you have to give the card up. */
+  demand: () =>
+    play([
+      { freq: 392, dur: 0.1, type: 'square', gain: 0.05 },
+      { freq: 392, at: 0.13, dur: 0.1, type: 'square', gain: 0.05 },
+      { freq: 311, at: 0.26, dur: 0.22, type: 'square', gain: 0.055 },
+    ]),
+  /** Your request paid off. */
+  granted: () =>
+    play([
+      { freq: NOTE.E5, dur: 0.09, type: 'triangle', gain: 0.08 },
+      { freq: NOTE.A5, at: 0.08, dur: 0.09, type: 'triangle', gain: 0.08 },
+      { freq: NOTE.E6, at: 0.16, dur: 0.25, type: 'triangle', gain: 0.09 },
+    ]),
+  /** Your request came back empty. */
+  denied: () => play([{ freq: 330, to: 220, dur: 0.22, type: 'triangle', gain: 0.07 }]),
   /** A bot has chosen its card. */
   botReady: () => play([{ freq: 1250, dur: 0.05, type: 'sine', gain: 0.025 }]),
   reveal: () =>

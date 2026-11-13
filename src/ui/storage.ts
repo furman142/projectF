@@ -4,10 +4,12 @@ export interface Settings {
   players: number;
   difficulty: Difficulty;
   sound: boolean;
+  /** Whether the "ask your neighbour for a card" rule is in play. */
+  requests: boolean;
 }
 
 const KEY = 'joker.settings.v1';
-const DEFAULTS: Settings = { players: 4, difficulty: 'easy', sound: true };
+const DEFAULTS: Settings = { players: 4, difficulty: 'easy', sound: true, requests: true };
 
 export function loadSettings(): Settings {
   try {
@@ -16,6 +18,7 @@ export function loadSettings(): Settings {
       players: [3, 4, 5, 6].includes(saved.players ?? 0) ? saved.players! : DEFAULTS.players,
       difficulty: saved.difficulty === 'hard' || saved.difficulty === 'easy' ? saved.difficulty : DEFAULTS.difficulty,
       sound: typeof saved.sound === 'boolean' ? saved.sound : DEFAULTS.sound,
+      requests: typeof saved.requests === 'boolean' ? saved.requests : DEFAULTS.requests,
     };
   } catch {
     return { ...DEFAULTS };

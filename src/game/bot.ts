@@ -1,5 +1,5 @@
 import { countRanks } from './deck';
-import { legalPasses } from './rules';
+import { canRequest, hasJoker, legalPasses } from './rules';
 import type { Card, Difficulty, NormalCard, PlayerId, Rank, Rng, RoundState } from './types';
 
 /** How often an Easy bot throws away a random card instead of thinking. */
@@ -127,4 +127,26 @@ export function chooseBotPass(
     (c) => (counts.get(c.rank) ?? 0) * 10 + (hoarded.get(c.rank) ?? 0) * 2 - incoming(c.rank) * 0.5,
     rng,
   );
+}
+
+/** How often an Easy bot remembers that it is allowed to ask for a card. */
+export const EASY_REQUEST_RATE = 0.4;
+
+/**
+ * Decide whether a bot spends its one request this turn, and on which rank.
+ * Bots save it for the moment it can win: three of a kind and no Joker in
+ * hand. Hard bots also use it to get unstuck from a pair late in a round.
+ */
+export function chooseBotRequest(round: RoundState, id: PlayerId, difficulty: Difficulty, rng: Rng): Rank | null {
+  if (!canRequest(round, id) || hasJoker(round.hands[id])) return null;
+  const counts = countRanks(round.hands[id]);
+  const top = Math.max(0, ...counts.values());
+  if (top >= 4) return null;
+  const wanted = [...counts.keys()].filter((r) => counts.get(r) === top);
+  if (top === 3) {
+    if (difficulty === 'easy' && rng() >= EASY_REQUEST_RATE) return null;
+    return wanted[0];
+  }
+  if (difficulty === 'hard' && top === 2 && round.turn >= round.order.length * 2) return pick(wanted, rng);
+  return null;
 }

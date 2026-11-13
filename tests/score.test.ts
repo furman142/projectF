@@ -96,6 +96,13 @@ describe('engine reducer', () => {
     expect(match.players.map((p) => p.letters)).toEqual([0, 0, 1]);
   });
 
+  it('records a card request', () => {
+    let match = startRound(createMatch(players(3)), seededRng(1));
+    match = reduce(match, { type: 'request', player: 'p1', rank: 'A' }, seededRng(1));
+    expect(match.round!.requests).toEqual({ p1: 'A' });
+    expect(match.round!.requestsUsed).toEqual(['p1']);
+  });
+
   it('rejects round actions before a round starts', () => {
     const match = createMatch(players(3));
     expect(() => reduce(match, { type: 'pass', passes: {} }, seededRng(1))).toThrow();

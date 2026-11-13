@@ -1,6 +1,6 @@
-import { applyPasses, callFour } from './rules';
+import { applyPasses, callFour, requestCard } from './rules';
 import { scoreRound, startRound } from './score';
-import type { MatchState, PlayerId, Rng } from './types';
+import type { MatchState, PlayerId, Rank, Rng } from './types';
 
 /**
  * Every way the match can change. A server (or a peer) can replay the same
@@ -8,6 +8,7 @@ import type { MatchState, PlayerId, Rng } from './types';
  */
 export type Action =
   | { type: 'startRound' }
+  | { type: 'request'; player: PlayerId; rank: Rank }
   | { type: 'pass'; passes: Record<PlayerId, string> }
   | { type: 'call'; player: PlayerId };
 
@@ -15,6 +16,9 @@ export function reduce(match: MatchState, action: Action, rng: Rng): MatchState 
   switch (action.type) {
     case 'startRound':
       return startRound(match, rng);
+    case 'request':
+      if (!match.round) throw new Error('No round in progress');
+      return { ...match, round: requestCard(match.round, action.player, action.rank) };
     case 'pass':
       if (!match.round) throw new Error('No round in progress');
       return { ...match, round: applyPasses(match.round, action.passes) };

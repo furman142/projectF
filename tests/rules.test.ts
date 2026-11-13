@@ -3,6 +3,10 @@ import {
   applyPasses,
   callFour,
   canCall,
+  canRequest,
+  forcedRank,
+  ranksInPlay,
+  requestCard,
   isJokerLocked,
   jokerHolder,
   leftOf,
@@ -163,5 +167,70 @@ describe('loser detection', () => {
     const r = callFour(round(['Ks Kh Kd JOKER', 'As Ah Ad Ac', 'Kc Qs Qh Qd Qc']), 'p2');
     expect(r.result!.loser).not.toBe(r.result!.caller);
     expect(r.result!.loser).toBe('p0');
+  });
+});
+
+describe('card requests', () => {
+  // p1 receives from p0, so p1 asks p0.
+  const asked = () => requestCard(start(), 'p1', 'K');
+
+  it('obliges the right-hand neighbour to pass the requested rank', () => {
+    const r = asked();
+    expect(forcedRank(r, 'p0')).toBe('K');
+    expect(legalPasses(r, 'p0').map((card) => card.id)).toEqual(['K-spades']);
+    expect(() => applyPasses(r, { p0: 'joker', p1: 'A-hearts', p2: 'A-diamonds', p3: 'A-clubs' })).toThrow(
+      /must pass the requested K/,
+    );
+    const next = applyPasses(r, { p0: 'K-spades', p1: 'A-hearts', p2: 'A-diamonds', p3: 'A-clubs' });
+    expect(next.hands.p1.map((card) => card.id)).toContain('K-spades');
+  });
+
+  it('lets them choose which card when they hold several of that rank', () => {
+    const r = requestCard(round(['Ks Kh Qs Js JOKER', 'Ah Kd Qh Jh', 'Ad As Qd Jd']), 'p1', 'K');
+    expect(legalPasses(r, 'p0').map((card) => card.id).sort()).toEqual(['K-hearts', 'K-spades']);
+  });
+
+  it('only binds the one neighbour, and only for this turn', () => {
+    const r = asked();
+    for (const id of ['p1', 'p2', 'p3']) expect(forcedRank(r, id)).toBeNull();
+    const next = applyPasses(r, { p0: 'K-spades', p1: 'A-hearts', p2: 'A-diamonds', p3: 'A-clubs' });
+    expect(next.requests).toEqual({});
+    expect(forcedRank(next, 'p0')).toBeNull();
+  });
+
+  it('is wasted if the neighbour does not hold that rank', () => {
+    const r = requestCard(round(['As Qs Js JOKER', 'Ah Kh Qh Jh', 'Ad Kd Qd Jd Ks']), 'p1', 'K');
+    expect(forcedRank(r, 'p0')).toBeNull();
+    expect(legalPasses(r, 'p0')).toHaveLength(4);
+    expect(canRequest(r, 'p1')).toBe(false);
+  });
+
+  it('can be used once per player per round', () => {
+    const r = asked();
+    expect(canRequest(r, 'p1')).toBe(false);
+    expect(canRequest(r, 'p2')).toBe(true);
+    expect(() => requestCard(r, 'p1', 'Q')).toThrow(/no request left/);
+    const next = applyPasses(r, { p0: 'K-spades', p1: 'A-hearts', p2: 'A-diamonds', p3: 'A-clubs' });
+    expect(canRequest(next, 'p1')).toBe(false);
+    expect(() => requestCard(next, 'p1', 'Q')).toThrow();
+  });
+
+  it('several players can ask in the same turn', () => {
+    const r = requestCard(asked(), 'p0', 'J'); // p0 asks p3
+    expect(forcedRank(r, 'p0')).toBe('K');
+    expect(forcedRank(r, 'p3')).toBe('J');
+    expect(legalPasses(r, 'p3').map((card) => card.id)).toEqual(['J-clubs']);
+  });
+
+  it('only allows ranks that are in the deck, and never after the round ends', () => {
+    expect(ranksInPlay(start())).toEqual(['A', 'K', 'Q', 'J']);
+    expect(() => requestCard(start(), 'p1', '9')).toThrow(/not in play/);
+    const over = callFour(round(['As Ah Ad Ac', 'Ks Kh Kd JOKER', 'Kc Qs Qh Qd Qc']), 'p0');
+    expect(canRequest(over, 'p1')).toBe(false);
+  });
+
+  it('a request can pin the Joker on its holder for the turn', () => {
+    const r = asked();
+    expect(legalPasses(r, 'p0').some((card) => card.kind === 'joker')).toBe(false);
   });
 });

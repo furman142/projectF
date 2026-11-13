@@ -61,6 +61,6 @@ export function dealRound(order: readonly PlayerId[], rng: Rng): RoundState {
     if (order.some((id) => fourOfAKindRank(hands[id]))) continue;
     const jokerSeat = Math.floor(rng() * order.length);
     hands[order[jokerSeat]].push(JOKER);
-    return { order: order.slice(), hands, jokerLockedFor: null, turn: 0, result: null };
+    return { order: order.slice(), hands, jokerLockedFor: null, requests: {}, requestsUsed: [], turn: 0, result: null };
   }
 }

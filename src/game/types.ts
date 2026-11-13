@@ -35,6 +35,13 @@ export interface RoundState {
   hands: Record<PlayerId, Card[]>;
   /** The player who just received the Joker and may not pass it this turn. */
   jokerLockedFor: PlayerId | null;
+  /**
+   * Card requests made this turn: requester → the rank they asked the player
+   * on their right for. Cleared after every pass.
+   */
+  requests: Record<PlayerId, Rank>;
+  /** Players who have already spent their one request for this round. */
+  requestsUsed: PlayerId[];
   /** Number of completed passes in this round. */
   turn: number;
   result: RoundResult | null;

@@ -23,6 +23,8 @@ export function round(hands: string[], extra: Partial<RoundState> = {}): RoundSt
     order,
     hands: Object.fromEntries(order.map((id, i) => [id, hand(hands[i])])),
     jokerLockedFor: null,
+    requests: {},
+    requestsUsed: [],
     turn: 0,
     result: null,
     ...extra,

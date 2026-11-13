@@ -1,5 +1,5 @@
 import { PENALTY_WORD, isEliminated } from '../game/score';
-import type { Card, MatchState, PlayerId } from '../game/types';
+import type { Card, MatchState, PlayerId, Rank } from '../game/types';
 import { cardFace, suitSvg } from './card';
 import { h, ICONS } from './dom';
 import type { Settings } from './storage';
@@ -132,8 +132,8 @@ function segmented<T extends string | number>(
   return el;
 }
 
-export function soundSwitch(on: boolean, onChange: (on: boolean) => void): HTMLElement {
-  const btn = h('button', { class: 'switch-row', type: 'button', role: 'switch', 'aria-checked': String(on) }, 'צלילים', h('span', { class: 'switch' }));
+export function switchRow(label: string, on: boolean, onChange: (on: boolean) => void): HTMLElement {
+  const btn = h('button', { class: 'switch-row', type: 'button', role: 'switch', 'aria-checked': String(on) }, label, h('span', { class: 'switch' }));
   btn.addEventListener('click', () => {
     const next = btn.getAttribute('aria-checked') !== 'true';
     btn.setAttribute('aria-checked', String(next));
@@ -183,7 +183,13 @@ export function settingsBody(settings: Settings, onChange: (patch: Partial<Setti
         ),
         hint,
       ),
-      soundSwitch(settings.sound, (sound) => onChange({ sound })),
+      h(
+        'div',
+        { class: 'field' },
+        switchRow('בקשת קלף מהשכן', settings.requests, (requests) => onChange({ requests })),
+        h('p', { class: 'field__hint' }, 'פעם אחת בכל חלוקה אפשר לבקש דרגה מהשחקן שמעביר אליכם. גם הבוטים יכולים לבקש מכם.'),
+      ),
+      switchRow('צלילים', settings.sound, (sound) => onChange({ sound })),
     ),
     h('div', { class: 'sheet__actions' }, h('button', { class: 'btn btn--gold btn--wide', type: 'button', onclick: onDone }, 'סיום')),
   );
@@ -191,20 +197,48 @@ export function settingsBody(settings: Settings, onChange: (patch: Partial<Setti
 
 // ---------- Rules ----------
 
-export function rulesBody(onDone: () => void): HTMLElement {
+export function rulesBody(onDone: () => void, requests = true): HTMLElement {
   const rules = [
     'כל שחקן מקבל <b>4 קלפים</b>. שחקן אחד מקבל גם את <b>הג׳וקר</b> כקלף חמישי.',
     'בכל סיבוב <b>כולם יחד</b> בוחרים קלף אחד ומעבירים אותו לשחקן שמשמאלם.',
     'מי שקיבל את הג׳וקר <b>חייב להחזיק אותו סיבוב אחד</b> לפני שיוכל להעביר אותו הלאה.',
     'אספתם ארבעה קלפים זהים? לחצו מהר על <b>רביעייה!</b> אי אפשר להכריז כשהג׳וקר ביד.',
+    requests &&
+      '<b>בקשת קלף:</b> פעם אחת בכל חלוקה אפשר לבקש דרגה מהשחקן שמעביר אליכם. אם יש לו, הוא <b>חייב</b> להעביר אותה. גם מכם יכולים לבקש.',
     'מי שמחזיק את הג׳וקר ברגע ההכרזה <b>מפסיד את הסיבוב</b> ומקבל אות.',
     `מי שהשלים את המילה <b class="ltr">${PENALTY_WORD.split('').join('-')}</b> יוצא מהמשחק. האחרון שנשאר מנצח.`,
   ];
   return h(
     'div',
     {},
-    h('ol', { class: 'rules' }, ...rules.map((html) => h('li', {}, h('span', { html })))),
+    h('ol', { class: 'rules' }, ...rules.filter((r): r is string => !!r).map((html) => h('li', {}, h('span', { html })))),
     h('div', { class: 'sheet__actions' }, h('button', { class: 'btn btn--gold btn--wide', type: 'button', onclick: onDone }, 'הבנתי')),
+  );
+}
+
+// ---------- Ask a neighbour for a card ----------
+
+export function requestBody(
+  options: { rank: Rank; held: number }[],
+  neighbour: string,
+  onPick: (rank: Rank) => void,
+): HTMLElement {
+  return h(
+    'div',
+    {},
+    h('p', { class: 'field__hint ask__lead' }, `אם ל${neighbour} יש קלף כזה, הוא יגיע אליכם בהעברה הקרובה. יש רק בקשה אחת בכל חלוקה.`),
+    h(
+      'div',
+      { class: 'ask__grid' },
+      ...options.map(({ rank, held }) =>
+        h(
+          'button',
+          { class: `ask__option ${held >= 3 ? 'is-best' : ''}`, type: 'button', onclick: () => onPick(rank) },
+          h('b', { class: 'ltr' }, rank),
+          h('span', {}, held ? `יש לכם ${held}` : 'אין לכם'),
+        ),
+      ),
+    ),
   );
 }
 
@@ -217,7 +251,7 @@ export function pauseBody(
   return h(
     'div',
     {},
-    h('div', { class: 'sheet__body' }, soundSwitch(sound, handlers.onSound)),
+    h('div', { class: 'sheet__body' }, switchRow('צלילים', sound, handlers.onSound)),
     h(
       'div',
       { class: 'sheet__actions' },

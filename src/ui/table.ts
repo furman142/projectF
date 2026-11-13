@@ -1,7 +1,7 @@
 import { RANKS } from '../game/deck';
 import { isJokerLocked, rightOf } from '../game/rules';
 import { PENALTY_WORD } from '../game/score';
-import type { Card, MatchPlayer, MatchState, PlayerId, RoundState } from '../game/types';
+import type { Card, MatchPlayer, MatchState, PlayerId, Rank, RoundState } from '../game/types';
 import { cardBack, cardFace } from './card';
 import { h, ICONS, reducedMotion, wait } from './dom';
 
@@ -9,6 +9,7 @@ export interface TableHandlers {
   onCardTap(cardId: string): void;
   onPass(): void;
   onCall(): void;
+  onAsk(): void;
   onMenu(): void;
   onToggleSound(): void;
 }
@@ -58,6 +59,7 @@ export class TableView {
   private readonly hand: HTMLElement;
   private readonly passBtn: HTMLButtonElement;
   private readonly callBtn: HTMLButtonElement;
+  private readonly askBtn: HTMLButtonElement;
   private seats = new Map<PlayerId, HTMLElement>();
 
   constructor(
@@ -89,12 +91,18 @@ export class TableView {
       { class: 'btn btn--call', type: 'button', disabled: true, onclick: () => handlers.onCall() },
       'רביעייה!',
     );
+    this.askBtn = h(
+      'button',
+      { class: 'btn btn--ask', type: 'button', disabled: true, 'aria-label': 'בקשת קלף מהשכן', onclick: () => handlers.onAsk() },
+      h('span', { html: ICONS.ask, style: 'display:grid' }),
+      h('small', {}, 'בקשה'),
+    );
     this.me = h(
       'section',
       { class: 'me' },
       h('div', { class: 'me__bar' }, this.meId, this.chipSlot),
       this.hand,
-      h('div', { class: 'actions' }, this.passBtn, this.callBtn),
+      h('div', { class: 'actions' }, this.passBtn, this.callBtn, this.askBtn),
     );
 
     this.el = h(
@@ -267,10 +275,46 @@ export class TableView {
     this.hand.classList.toggle('has-selection', cardId !== null);
   }
 
-  setActions(state: { canPass: boolean; canCall: boolean }): void {
+  setActions(state: { canPass: boolean; canCall: boolean; canAsk?: boolean; askUsed?: boolean }): void {
     this.passBtn.disabled = !state.canPass;
     this.callBtn.disabled = !state.canCall;
     this.callBtn.classList.toggle('is-live', state.canCall);
+    this.askBtn.disabled = !state.canAsk;
+    this.askBtn.classList.toggle('is-used', !!state.askUsed);
+  }
+
+  /** Hide the request button entirely when the rule is switched off. */
+  setAskEnabled(on: boolean): void {
+    this.askBtn.hidden = !on;
+    this.askBtn.parentElement!.classList.toggle('actions--ask', on);
+  }
+
+  /** Speech bubble over a seat ("wants K"). `hot` = it is aimed at the human. */
+  setBubble(id: PlayerId, rank: Rank | null, kind: 'wants' | 'asked' | 'hot' = 'wants'): void {
+    const seat = this.seats.get(id);
+    if (!seat) return;
+    seat.querySelector('.seat__bubble')?.remove();
+    if (!rank) return;
+    seat.append(
+      h(
+        'div',
+        { class: `seat__bubble seat__bubble--${kind}` },
+        kind === 'asked' ? 'ביקשתם' : 'רוצה',
+        h('b', { class: 'ltr' }, rank),
+      ),
+    );
+  }
+
+  clearBubbles(): void {
+    for (const seat of this.seats.values()) seat.querySelector('.seat__bubble')?.remove();
+  }
+
+  /** Mark the cards you are obliged to pass because a neighbour asked for them. */
+  setForced(rank: Rank | null): void {
+    this.hand.classList.toggle('is-forced', rank !== null);
+    for (const el of this.hand.children as Iterable<HTMLElement>) {
+      el.classList.toggle('is-wanted', rank !== null && el.dataset.id!.startsWith(`${rank}-`));
+    }
   }
 
   shake(cardId: string): void {

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { chooseBotPass, createBotMemory, observePass, type BotMemory } from '../src/game/bot';
+import { chooseBotPass, chooseBotRequest, createBotMemory, observePass, type BotMemory } from '../src/game/bot';
 import { dealRound } from '../src/game/deck';
 import { seededRng } from '../src/game/engine';
-import { applyPasses, callFour, legalPasses, playersWhoCanCall, rightOf } from '../src/game/rules';
+import { applyPasses, callFour, legalPasses, playersWhoCanCall, requestCard, rightOf } from '../src/game/rules';
 import type { Difficulty, RoundState } from '../src/game/types';
 import { c, round } from './helpers';
 
@@ -70,6 +70,43 @@ describe('bot passing', () => {
   });
 });
 
+describe('bot requests', () => {
+  it('asks for the rank it has three of', () => {
+    const r = round(['As Ah Ad Qc', 'Ks Kh Qd Jc JOKER', 'Kd Ac Qs Js']);
+    expect(chooseBotRequest(r, 'p0', 'hard', rng())).toBe('A');
+  });
+
+  it('does not ask while holding the Joker, or once its request is spent', () => {
+    const r = round(['As Ah Ad JOKER', 'Ks Kh Qd Jc Qc', 'Kd Ac Qs Js']);
+    expect(chooseBotRequest(r, 'p0', 'hard', rng())).toBeNull();
+    const spent = round(['As Ah Ad Qc', 'Ks Kh Qd Jc JOKER', 'Kd Ac Qs Js'], { requestsUsed: ['p0'] });
+    expect(chooseBotRequest(spent, 'p0', 'hard', rng())).toBeNull();
+  });
+
+  it('hard: holds the request back with only a pair early on, uses it later', () => {
+    const early = round(['As Ah Kd Qc', 'Ks Kh Qd Jc JOKER', 'Ad Ac Qs Js']);
+    expect(chooseBotRequest(early, 'p0', 'hard', rng())).toBeNull();
+    expect(chooseBotRequest({ ...early, turn: 6 }, 'p0', 'hard', rng())).toBe('A');
+    expect(chooseBotRequest({ ...early, turn: 6 }, 'p0', 'easy', rng())).toBeNull();
+  });
+
+  it('easy: only sometimes remembers to ask', () => {
+    const r = round(['As Ah Ad Qc', 'Ks Kh Qd Jc JOKER', 'Kd Ac Qs Js']);
+    let asked = 0;
+    for (let seed = 0; seed < 300; seed++) if (chooseBotRequest(r, 'p0', 'easy', seededRng(seed))) asked++;
+    expect(asked).toBeGreaterThan(70);
+    expect(asked).toBeLessThan(170);
+  });
+
+  it.each(['easy', 'hard'] as const)('%s: hands over a requested rank, even instead of the Joker', (level) => {
+    // p1 asks p0 (on its right) for a queen; p0 would rather dump the Joker.
+    const r = requestCard(round(['As Ah Kd Qc JOKER', 'Qs Qh Qd Jc', 'Ad Ac Ks Js']), 'p1', 'Q');
+    for (let seed = 0; seed < 30; seed++) {
+      expect(chooseBotPass(r, 'p0', level, createBotMemory(), seededRng(seed))).toEqual(c('Qc'));
+    }
+  });
+});
+
 describe('bot memory', () => {
   it('tracks cards passed on, cards that came back, and what arrived', () => {
     let m = createBotMemory();
@@ -94,6 +131,10 @@ function simulate(playerCount: number, level: Difficulty, seed: number): { turns
   for (let turns = 0; turns < 2000; turns++) {
     const callers = playersWhoCanCall(r);
     if (callers.length) return { turns, round: callFour(r, callers[0]) };
+    for (const id of order) {
+      const rank = chooseBotRequest(r, id, level, random);
+      if (rank) r = requestCard(r, id, rank);
+    }
     const picks = Object.fromEntries(order.map((id) => [id, chooseBotPass(r, id, level, memory[id], random)]));
     for (const id of order) expect(legalPasses(r, id)).toContainEqual(picks[id]);
     const next = applyPasses(r, Object.fromEntries(order.map((id) => [id, picks[id].id])));

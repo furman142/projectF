@@ -784,3 +784,131 @@
       0 22px 30px rgba(0, 0, 0, 0.5);
   }
 }
+
+/* ---------- Asking a neighbour for a card ---------- */
+
+.actions--ask {
+  grid-template-columns: 1fr 1fr 62px;
+}
+
+.btn--ask {
+  flex-direction: column;
+  gap: 1px;
+  padding: 0;
+  border-radius: 18px;
+  color: var(--gold);
+  background: rgba(244, 207, 122, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(244, 207, 122, 0.45);
+}
+
+.btn--ask[hidden] {
+  display: none;
+}
+
+.btn--ask svg {
+  width: 22px;
+  height: 22px;
+}
+
+.btn--ask small {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.btn--ask:disabled {
+  color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.btn--ask.is-used small {
+  text-decoration: line-through;
+}
+
+.seat__bubble {
+  position: absolute;
+  top: calc(100% + 9px);
+  left: 50%;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: #2a1a05;
+  background: var(--cream);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
+  translate: -50% 0;
+  animation: bubble-in 0.4s var(--ease-spring) both;
+}
+
+.seat__bubble::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  background: inherit;
+  translate: -50% 0;
+  rotate: 45deg;
+}
+
+.seat__bubble b {
+  position: relative;
+  font-family: var(--font-card);
+  font-weight: 900;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.seat__bubble--asked {
+  color: #3a2607;
+  background: var(--gold);
+}
+
+.seat__bubble--hot {
+  color: #fff;
+  background: #e0356f;
+  animation:
+    bubble-in 0.4s var(--ease-spring) both,
+    bubble-nag 0.9s ease-in-out 0.4s infinite alternate;
+}
+
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    scale: 0.4;
+  }
+}
+
+@keyframes bubble-nag {
+  to {
+    box-shadow:
+      0 6px 16px rgba(0, 0, 0, 0.5),
+      0 0 0 6px rgba(224, 53, 111, 0.3);
+  }
+}
+
+/* Cards a neighbour asked for: these are the only ones you may pass. */
+.hand.is-forced .card:not(.is-wanted) {
+  filter: brightness(0.5) saturate(0.5);
+  cursor: not-allowed;
+}
+
+.hand.is-forced .card.is-wanted:not(.is-selected) {
+  transform: translateY(calc(var(--drop, 0px) - 12px)) rotate(var(--rot, 0deg));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.9),
+    0 0 0 3px #e0356f,
+    0 0 22px rgba(224, 53, 111, 0.8),
+    0 14px 22px rgba(0, 0, 0, 0.45);
+}
+
+.hand.is-forced .card--joker {
+  animation: none;
+}

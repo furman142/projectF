@@ -1,12 +1,12 @@
-import { chooseBotPass, createBotMemory, observePass, type BotMemory } from '../game/bot';
-import { fourOfAKindRank } from '../game/deck';
+import { chooseBotPass, chooseBotRequest, createBotMemory, observePass, type BotMemory } from '../game/bot';
+import { countRanks, fourOfAKindRank } from '../game/deck';
 import { reduce } from '../game/engine';
-import { canCall, hasJoker, isJokerLocked, playersWhoCanCall, rightOf } from '../game/rules';
+import { canCall, canRequest, forcedRank, hasJoker, isJokerLocked, leftOf, legalPasses, playersWhoCanCall, ranksInPlay, rightOf } from '../game/rules';
 import { createMatch, isEliminated, matchWinner } from '../game/score';
-import type { Card, MatchState, PlayerId, RoundState } from '../game/types';
+import type { Card, MatchState, PlayerId, Rank, RoundState } from '../game/types';
 import { wait } from './dom';
 import { confetti, shake } from './fx';
-import { gameOverBody, homeScreen, openSheet, pauseBody, roundEndBody, rulesBody, settingsBody, type Sheet } from './screens';
+import { gameOverBody, homeScreen, openSheet, pauseBody, requestBody, roundEndBody, rulesBody, settingsBody, type Sheet } from './screens';
 import { setSoundEnabled, sfx, vibrate } from './sound';
 import { loadSettings, saveSettings, type Settings } from './storage';
 import { TableView } from './table';
@@ -115,7 +115,7 @@ export class App {
     sfx.sheet();
     const sheet: Sheet = openSheet(this.root, {
       title: 'איך משחקים',
-      body: rulesBody(() => void sheet.close().then(after)),
+      body: rulesBody(() => void sheet.close().then(after), this.settings.requests),
       onDismiss: () => after?.(),
     });
   }
@@ -181,10 +181,12 @@ export class App {
       onCardTap: (id) => this.tapCard(id),
       onPass: () => void this.pass(),
       onCall: () => void this.call(HUMAN),
+      onAsk: () => this.ask(),
       onMenu: () => this.showPause(),
       onToggleSound: () => this.updateSettings({ sound: !this.settings.sound }),
     });
     this.view.setSound(this.settings.sound);
+    this.view.setAskEnabled(this.settings.requests);
     this.setScreen(this.view.el);
     this.startRound();
   }
@@ -224,21 +226,51 @@ export class App {
     view.setSelection(null);
     view.clearReady();
 
-    const mine = round.hands[HUMAN];
-    const live = canCall(round, HUMAN);
-    view.setActions({ canPass: false, canCall: live });
+    view.clearBubbles();
+    view.setForced(null);
+
+    // Bots decide up front whether to spend their request, so you can react.
+    if (this.settings.requests) {
+      for (const id of round.order) {
+        if (id === HUMAN) continue;
+        const rank = chooseBotRequest(this.round, id, this.settings.difficulty, rng);
+        if (!rank) continue;
+        this.match = reduce(this.match!, { type: 'request', player: id, rank }, rng);
+        view.setBubble(id, rank, rightOf(this.round, id) === HUMAN ? 'hot' : 'wants');
+      }
+    }
+    const round2 = this.round;
+    const asker = leftOf(round2, HUMAN);
+    const wanted = round2.requests[asker];
+    const forced = forcedRank(round2, HUMAN);
+    const askerName = this.match!.players.find((p) => p.id === asker)!.name;
+    view.setForced(forced);
+
+    const mine = round2.hands[HUMAN];
+    const live = canCall(round2, HUMAN);
+    this.refreshActions();
     if (live) {
       view.setStatus('יש לכם רביעייה! לחצו מהר');
       sfx.ready();
       vibrate(80);
+    } else if (forced) {
+      view.setStatus(`${askerName} רוצה ${forced} — חייבים להעביר`);
+      sfx.demand();
+      vibrate([30, 40, 30]);
     } else if (fourOfAKindRank(mine)) {
       view.setStatus('רביעייה ביד, אבל קודם צריך להיפטר מהג׳וקר');
     } else {
       view.setStatus('בחרו קלף להעברה');
+      if (wanted) {
+        view.toast(`${askerName} רוצה ${wanted}, אבל אין לכם`);
+        sfx.ask();
+      } else if (Object.keys(round2.requests).length) {
+        sfx.ask();
+      }
     }
 
     const fast = this.settings.difficulty === 'hard';
-    for (const id of playersWhoCanCall(round)) {
+    for (const id of playersWhoCanCall(round2)) {
       if (id === HUMAN) continue;
       this.pendingCallers.add(id);
       this.later(fast ? between(500, 1300) : between(1100, 2000), () => void this.call(id));
@@ -252,8 +284,8 @@ export class App {
       });
     }
     // Tell the player the moment a held Joker becomes passable again.
-    if (hasJoker(mine) && this.wasLocked && !isJokerLocked(round, HUMAN)) sfx.unlock();
-    this.wasLocked = isJokerLocked(round, HUMAN);
+    if (hasJoker(mine) && this.wasLocked && !isJokerLocked(round2, HUMAN)) sfx.unlock();
+    this.wasLocked = isJokerLocked(round2, HUMAN);
     this.syncHeartbeat();
   }
 
@@ -269,12 +301,68 @@ export class App {
       vibrate(40);
       return;
     }
+    const forced = forcedRank(this.round, HUMAN);
+    if (forced && !legalPasses(this.round, HUMAN).some((c) => c.id === cardId)) {
+      view.shake(cardId);
+      view.toast(`ביקשו מכם ${forced}: חייבים להעביר אותו`);
+      sfx.error();
+      vibrate(40);
+      return;
+    }
     this.selected = this.selected === cardId ? null : cardId;
     if (this.selected) sfx.tap();
     else sfx.deselect();
     vibrate(10);
     view.setSelection(this.selected);
-    view.setActions({ canPass: this.selected !== null, canCall: canCall(this.round, HUMAN) });
+    this.refreshActions();
+  }
+
+  private refreshActions(): void {
+    const choosing = this.phase === 'choosing';
+    const open = choosing && this.settings.requests && canRequest(this.round, HUMAN);
+    this.view!.setActions({
+      canPass: choosing && this.selected !== null,
+      canCall: choosing && canCall(this.round, HUMAN),
+      canAsk: open,
+      askUsed: this.settings.requests && !canRequest(this.round, HUMAN),
+    });
+  }
+
+  /** Spend your one request: pick a rank to demand from the player on your right. */
+  private ask(): void {
+    if (this.phase !== 'choosing' || this.paused || !canRequest(this.round, HUMAN)) return;
+    const view = this.view!;
+    const target = rightOf(this.round, HUMAN);
+    const targetName = this.match!.players.find((p) => p.id === target)!.name;
+    const counts = countRanks(this.round.hands[HUMAN]);
+    this.paused = true;
+    this.syncHeartbeat();
+    sfx.sheet();
+    const resume = () => {
+      this.paused = false;
+      for (const fn of this.deferred.splice(0)) fn();
+      this.syncHeartbeat();
+    };
+    const sheet: Sheet = openSheet(this.root, {
+      title: `מה לבקש מ${targetName}?`,
+      className: 'sheet--ask',
+      body: requestBody(
+        ranksInPlay(this.round).map((rank) => ({ rank, held: counts.get(rank) ?? 0 })),
+        targetName,
+        (rank: Rank) =>
+          void sheet.close().then(() => {
+            resume();
+            if (this.phase !== 'choosing' || this.view !== view || !canRequest(this.round, HUMAN)) return;
+            this.match = reduce(this.match!, { type: 'request', player: HUMAN, rank }, rng);
+            view.setBubble(target, rank, 'asked');
+            view.toast(`ביקשתם ${rank} מ${targetName}`);
+            sfx.ask();
+            vibrate(20);
+            this.refreshActions();
+          }),
+      ),
+      onDismiss: resume,
+    });
   }
 
   private async pass(): Promise<void> {
@@ -317,9 +405,17 @@ export class App {
     if (this.view !== view || this.phase !== 'passing') return; // left the game mid-animation
 
     const received = picks[rightOf(prev, HUMAN)];
+    const asked = prev.requests[HUMAN];
+    const giver = this.match!.players.find((p) => p.id === rightOf(prev, HUMAN))!.name;
     if (received.kind === 'joker') {
       this.announceJoker();
       view.toast('קיבלתם את הג׳וקר!');
+    } else if (asked && received.rank === asked) {
+      sfx.granted();
+      view.toast(`הבקשה הצליחה: קיבלתם ${asked} מ${giver}`);
+    } else if (asked) {
+      sfx.denied();
+      view.toast(`ל${giver} לא היה ${asked}`);
     } else {
       sfx.reveal();
     }
