@@ -7,9 +7,8 @@ import { PLAYER_COLORS, type Options } from '../shared/types.ts';
 
 const BOT_NAMES = ['Captain Gale', 'Admiral Nimbus', 'Skipper Zephyr', 'Navigator Mist'];
 const CODE_LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-const AWAY_AFTER_MS = 15_000;
-const LOBBY_DROP_MS = 30_000;
-const ROOM_IDLE_MS = 15 * 60_000;
+export interface Timings { awayAfter: number; lobbyDrop: number; roomIdle: number; botDelay: number }
+const DEFAULT_TIMINGS: Timings = { awayAfter: 15_000, lobbyDrop: 30_000, roomIdle: 15 * 60_000, botDelay: 900 };
 
 interface Seat {
   name: string;
@@ -27,7 +26,7 @@ export class Room {
   game: GameHost | null = null;
   emptySince = Date.now();
 
-  constructor(readonly code: string, private onEmpty: (r: Room) => void) {}
+  constructor(readonly code: string, private onEmpty: (r: Room) => void, private t: Timings = DEFAULT_TIMINGS) {}
 
   seatOf(ws: WebSocket) {
     return this.seats.findIndex((s) => s.ws === ws);
@@ -86,6 +85,8 @@ export class Room {
   }
 
   removeSeat(i: number) {
+    // Seats map 1:1 to game players; removing one mid-game would shift everyone's seat.
+    if (this.game) return;
     const [gone] = this.seats.splice(i, 1);
     if (gone.timer) clearTimeout(gone.timer);
     if (this.host === i || this.host >= this.seats.length) this.host = Math.max(0, this.seats.findIndex((s) => !s.bot));
@@ -101,10 +102,14 @@ export class Room {
     seat.ws = null;
     if (!this.seats.some((s) => s.ws)) this.emptySince = Date.now();
     if (this.game) {
-      seat.timer = setTimeout(() => { seat.timer = null; if (!seat.ws) this.game?.setAway(this.seats.indexOf(seat), true); }, AWAY_AFTER_MS);
+      seat.timer = setTimeout(() => { seat.timer = null; if (!seat.ws) this.game?.setAway(this.seats.indexOf(seat), true); }, this.t.awayAfter);
       this.broadcastLobby();
     } else {
-      seat.timer = setTimeout(() => { const j = this.seats.indexOf(seat); if (j >= 0 && !seat.ws) this.removeSeat(j); }, LOBBY_DROP_MS);
+      seat.timer = setTimeout(() => {
+        seat.timer = null;
+        const j = this.seats.indexOf(seat);
+        if (j >= 0 && !seat.ws && !this.game) this.removeSeat(j);
+      }, this.t.lobbyDrop);
       this.broadcastLobby();
     }
   }
@@ -152,8 +157,12 @@ export class Room {
           players: this.seats.map((s) => ({ name: s.name, color: s.color, bot: s.bot })),
           options: this.options,
         });
-        this.game = new GameHost(state, { botDelay: 900, onChange: () => this.broadcastViews() });
-        this.seats.forEach((s, j) => !s.bot && !s.ws && this.game!.setAway(j, true));
+        this.game = new GameHost(state, { botDelay: this.t.botDelay, onChange: () => this.broadcastViews() });
+        this.seats.forEach((s, j) => {
+          // Lobby drop timers no longer apply; anyone not here is played by a bot until they return.
+          if (s.timer) { clearTimeout(s.timer); s.timer = null; }
+          if (!s.bot && !s.ws) this.game!.setAway(j, true);
+        });
         this.broadcastLobby();
         this.broadcastViews();
         this.game.start();
@@ -166,7 +175,10 @@ export class Room {
         return;
       }
       case 'toLobby': {
-        if (!isHost || !this.game || this.game.state.phase !== 'over') return;
+        if (!this.game || this.game.state.phase !== 'over') return;
+        // The host decides, unless the host has left: then any player present can.
+        if (!isHost && this.seats[this.host]?.ws) return;
+        this.host = i;
         this.game.stop();
         this.game = null;
         // Drop players who left during the game.
@@ -189,14 +201,24 @@ export class Room {
 export class Rooms {
   private rooms = new Map<string, Room>();
   private bySocket = new Map<WebSocket, Room>();
+  private t: Timings;
+  private sweep: ReturnType<typeof setInterval>;
 
-  constructor() {
-    setInterval(() => {
+  constructor(timings: Partial<Timings> = {}) {
+    this.t = { ...DEFAULT_TIMINGS, ...timings };
+    this.sweep = setInterval(() => {
       const now = Date.now();
       for (const r of this.rooms.values()) {
-        if (!r.seats.some((s) => s.ws) && now - r.emptySince > ROOM_IDLE_MS) this.drop(r);
+        if (!r.seats.some((s) => s.ws) && now - r.emptySince > this.t.roomIdle) this.drop(r);
       }
-    }, 60_000).unref();
+    }, Math.min(60_000, this.t.roomIdle)).unref();
+  }
+
+  get(code: string) { return this.rooms.get(code); }
+
+  shutdown() {
+    clearInterval(this.sweep);
+    for (const r of this.rooms.values()) this.drop(r);
   }
 
   get count() { return this.rooms.size; }
@@ -221,7 +243,7 @@ export class Rooms {
       if (prev) prev.disconnected(ws);
       let room: Room | undefined;
       if (msg.t === 'create') {
-        room = new Room(this.newCode(), (r) => this.drop(r));
+        room = new Room(this.newCode(), (r) => this.drop(r), this.t);
         this.rooms.set(room.code, room);
       } else {
         room = this.rooms.get(String(msg.code ?? '').toUpperCase());

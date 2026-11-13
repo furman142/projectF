@@ -1,6 +1,6 @@
 import type { Action, GameState } from './types.ts';
 import { reduce } from './engine.ts';
-import { botAction } from './bot.ts';
+import { botAction, fallbackActions } from './bot.ts';
 import { viewFor, type GameView } from './view.ts';
 
 export interface HostOptions {
@@ -69,11 +69,12 @@ export class GameHost {
       const move = this.nextBotMove();
       if (!move) return;
       const r = this.act(move.player, move.action);
-      if (!r.ok) {
-        // A bot should never pick an illegal move; fall back to ending its turn so the game can't stall.
-        console.warn('bot move rejected', move, r.error);
-        if (this.state.current === move.player && this.state.phase === 'main') this.act(move.player, { type: 'endTurn' });
-      }
+      if (r.ok) return;
+      // A bot should never pick an illegal move. If it does, play any legal move instead so the game can't freeze.
+      console.warn('bot move rejected', move.action, r.error);
+      for (const a of fallbackActions(this.state, move.player)) if (this.act(move.player, a).ok) return;
+      // Nothing worked (should be impossible): try again shortly rather than stopping.
+      this.schedule();
     }, quick ? (this.opts.botDelay ?? 600) / 2 : this.opts.botDelay ?? 600);
   }
 

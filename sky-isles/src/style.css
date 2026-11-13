@@ -317,3 +317,5 @@ input, select { font: inherit; padding: 10px 12px; border-radius: 10px; border: 
 @media (prefers-reduced-motion: reduce) {
   .btn.primary.big, .banner.mine span, .card.bump { animation: none !important; }
 }
+
+.modal.still { animation: none; }

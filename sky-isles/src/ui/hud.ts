@@ -31,6 +31,8 @@ export class Hud {
   private discard = emptyRes();
   private busy = false;
   private revealAt = 0;
+  private overAt = 0;
+  private modalKey = '';
   private prevHand: ResMap | null = null;
   private bumps = new Map<Resource, number>();
   private logOpen = innerWidth > 900;
@@ -168,6 +170,9 @@ export class Hud {
           this.world.fx.fireworks(ev.player === this.me ? 6 : 3);
           this.bigBanner(ev.player === this.me ? '🏆 Victory!' : `🏆 ${esc(v.players[ev.player].name)} wins`, '', color(ev.player));
           if (ev.player === this.me) this.confetti();
+          // Let the banner and fireworks play before the results window covers the board.
+          this.overAt = performance.now() + 2600;
+          setTimeout(() => this.render(), 2650);
           break;
         default: break;
       }
@@ -579,7 +584,7 @@ export class Hud {
           <p>Outposts need a gap of one corner from any other building and must touch your bridge. A 7 brings the sky pirate: anyone with 8+ cards discards half, and the roller blocks an island and steals a card.</p>
           <p>Trade 4:1 with the bank, 3:1 or 2:1 at a dock you have built on. Longest Sky-Bridge (5+) and Largest Fleet (3+ knights) are worth 2 Glory each. First to ${v.options.target} Glory wins.</p>
         </details>`);
-    } else if (v.phase === 'over') {
+    } else if (v.phase === 'over' && performance.now() >= this.overAt) {
       const order = v.players.map((p, i) => ({ p, i })).sort((a, b) => b.p.glory - a.p.glory);
       const maxRoll = Math.max(1, ...v.rolls);
       html = box(v.winner === this.me ? '🏆 Victory!' : `🏆 ${esc(v.players[v.winner!].name)} wins`, `
@@ -589,7 +594,11 @@ export class Hud {
         <div class="hist">${v.rolls.slice(2).map((n, i) => `<div><i style="height:${(n / maxRoll) * 100}%"></i><span>${i + 2}</span></div>`).join('')}</div>
         <button class="btn primary wide" data-act="exit">${this.conn.online ? 'Back to lobby' : 'Main menu'}</button>`, false);
     }
+    // Only animate a window when it first opens; redrawing the same window must not replay the pop.
+    const key = html ? (html.match(/<h3>(.*?)<\/h3>/)?.[1] ?? 'modal') : '';
     this.els.modal.innerHTML = html;
+    if (html && key === this.modalKey) this.els.modal.querySelector('.modal')?.classList.add('still');
+    this.modalKey = key;
     this.els.modal.classList.toggle('show', !!html);
   }
 }

@@ -103,7 +103,8 @@ function startGame(c: Conn) {
   conn = c;
   hud = new Hud(hudEl, world, c, (gameOver) => {
     // The online host takes everyone back to the lobby for a rematch.
-    if (gameOver && c instanceof NetConn && c.lastLobby && c.lastLobby.host === c.lastLobby.you) {
+    const l = c instanceof NetConn ? c.lastLobby : null;
+    if (gameOver && c instanceof NetConn && l && (l.host === l.you || !l.seats[l.host]?.connected)) {
       c.msg({ t: 'toLobby' });
       return;
     }

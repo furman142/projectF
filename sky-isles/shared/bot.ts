@@ -199,4 +199,35 @@ export function botAction(s: GameState, p: number): Action | null {
   return null;
 }
 
+/**
+ * Plain legal moves to try if a bot's chosen move is rejected, so the game can never freeze.
+ * Ordered from "least harmful" to "anything legal".
+ */
+export function fallbackActions(s: GameState, p: number): Action[] {
+  const out: Action[] = [];
+  if (s.phase === 'discard' && s.discards[p] > 0) out.push(discardFor(s, p));
+  if (s.trade && s.trade.from !== p && s.trade.responses[p] === null) out.push({ type: 'respondTrade', accept: false });
+  if (s.current !== p) return out;
+  if (s.trade?.from === p) out.push({ type: 'cancelTrade' });
+  switch (s.phase) {
+    case 'roll': out.push({ type: 'roll' }); break;
+    case 'main': out.push({ type: 'endTurn' }); break;
+    case 'pirate':
+      for (const h of s.board.hexes) {
+        if (h.id === s.pirate) continue;
+        const victims = pirateVictims(s, p, h.id);
+        out.push({ type: 'movePirate', hex: h.id, victim: victims[0] ?? null });
+      }
+      break;
+    case 'setup':
+      if (s.lastOutpost === null) legalOutposts(s, p).forEach((v) => out.push({ type: 'placeOutpost', vertex: v }));
+      else legalBridges(s, p).forEach((e) => out.push({ type: 'placeBridge', edge: e }));
+      break;
+    case 'freeBridges':
+      legalBridges(s, p).forEach((e) => out.push({ type: 'placeBridge', edge: e }));
+      break;
+  }
+  return out;
+}
+
 export { outpostOk };

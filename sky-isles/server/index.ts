@@ -3,17 +3,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { Rooms } from './rooms.ts';
+import { Rooms, type Timings } from './rooms.ts';
 import type { ClientMsg } from '../shared/protocol.ts';
 
-const PORT = Number(process.env.PORT ?? 8787);
 const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../dist');
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml',
   '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2', '.ico': 'image/x-icon',
 };
 
-const rooms = new Rooms();
+/** Starts the HTTP + WebSocket server. Exported so tests can run it on a free port. */
+export function startServer(opts: { port: number; timings?: Partial<Timings>; quiet?: boolean }) {
+const rooms = new Rooms(opts.timings);
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://x');
@@ -62,4 +63,24 @@ wss.on('connection', (ws) => {
   ws.on('close', () => { clearInterval(ping); rooms.closed(ws); });
 });
 
-server.listen(PORT, () => console.log(`Sky Isles server on http://localhost:${PORT}`));
+return new Promise<{ port: number; rooms: Rooms; close: () => Promise<void> }>((resolve) => {
+  server.listen(opts.port, () => {
+    const addr = server.address();
+    const port = typeof addr === 'object' && addr ? addr.port : opts.port;
+    if (!opts.quiet) console.log(`Sky Isles server on http://localhost:${port}`);
+    resolve({
+      port,
+      rooms,
+      close: () => new Promise<void>((done) => {
+        rooms.shutdown();
+        for (const ws of wss.clients) ws.terminate();
+        wss.close();
+        server.close(() => done());
+      }),
+    });
+  });
+});
+}
+
+const isMain = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+if (isMain) void startServer({ port: Number(process.env.PORT ?? 8787) });

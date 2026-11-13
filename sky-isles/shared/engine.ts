@@ -84,18 +84,23 @@ export function canAfford(hand: ResMap, cost: ResMap): boolean {
   return RESOURCES.every((r) => hand[r] >= cost[r]);
 }
 
+/** True for a whole number in [0, len). Rejects strings, booleans, fractions, NaN. */
+function isId(x: unknown, len: number): x is number {
+  return typeof x === 'number' && Number.isInteger(x) && x >= 0 && x < len;
+}
+
 function distanceOk(s: GameState, v: number): boolean {
   return !s.buildings[v] && s.board.vertices[v].adj.every((a) => !s.buildings[a]);
 }
 
 export function outpostOk(s: GameState, p: number, v: number): boolean {
-  if (v < 0 || v >= s.buildings.length || !distanceOk(s, v)) return false;
+  if (!isId(v, s.buildings.length) || !distanceOk(s, v)) return false;
   if (s.phase === 'setup') return true;
   return s.board.vertices[v].edges.some((e) => s.bridges[e] === p);
 }
 
 export function bridgeOk(s: GameState, p: number, e: number): boolean {
-  if (e < 0 || e >= s.bridges.length || s.bridges[e] !== null) return false;
+  if (!isId(e, s.bridges.length) || s.bridges[e] !== null) return false;
   const edge = s.board.edges[e];
   if (s.phase === 'setup') return s.lastOutpost !== null && edge.v.includes(s.lastOutpost);
   return edge.v.some((v) => {
@@ -265,6 +270,8 @@ export function reduce(state: GameState, p: number, action: Action): Result {
   const s = structuredClone(state);
   const err = apply(s, p, action);
   if (err) return { ok: false, error: err };
+  // Offers only live in the build/trade phase (e.g. a knight played mid-offer withdraws it).
+  if (s.trade && s.phase !== 'main') s.trade = null;
   if (s.phase !== 'setup' && s.phase !== 'over' && totalGlory(s, s.current) >= s.options.target) {
     s.winner = s.current;
     s.phase = 'over';
@@ -277,7 +284,7 @@ export function reduce(state: GameState, p: number, action: Action): Result {
 function apply(s: GameState, p: number, a: Action): string | null {
   if (!a || typeof a !== 'object') return 'Bad action';
   if (s.phase === 'over') return 'The game is over';
-  if (p < 0 || p >= s.players.length) return 'Not a player';
+  if (!isId(p, s.players.length)) return 'Not a player';
   const pl: Player = s.players[p];
   const mine = p === s.current;
 
@@ -351,7 +358,7 @@ function apply(s: GameState, p: number, a: Action): string | null {
     case 'upgrade': {
       if (!mine) return 'Not your turn';
       if (s.phase !== 'main') return 'You cannot build now';
-      const b = s.buildings[a.vertex];
+      const b = isId(a.vertex, s.buildings.length) ? s.buildings[a.vertex] : null;
       if (!b || b.owner !== p || b.citadel) return 'Upgrade one of your outposts';
       if (countPieces(s, p).citadels >= LIMITS.citadel) return 'No citadels left';
       if (!canAfford(pl.hand, COSTS.citadel)) return 'Not enough resources';
@@ -394,7 +401,7 @@ function apply(s: GameState, p: number, a: Action): string | null {
     case 'movePirate': {
       if (!mine) return 'Not your turn';
       if (s.phase !== 'pirate') return 'You cannot move the pirate now';
-      if (!Number.isInteger(a.hex) || a.hex < 0 || a.hex >= s.board.hexes.length) return 'Pick an island';
+      if (!isId(a.hex, s.board.hexes.length)) return 'Pick an island';
       if (a.hex === s.pirate) return 'The pirate must move to a different island';
       const victims = pirateVictims(s, p, a.hex);
       if (victims.length && !victims.includes(a.victim as number)) return 'Choose a player to steal from';
@@ -494,7 +501,7 @@ function apply(s: GameState, p: number, a: Action): string | null {
       const t = s.trade;
       if (!t || p !== t.from) return 'No offer to confirm';
       const o = a.with;
-      if (t.responses[o] !== true) return 'That player has not accepted';
+      if (!isId(o, s.players.length) || t.responses[o] !== true) return 'That player has not accepted';
       if (!canAfford(pl.hand, t.give) || !canAfford(s.players[o].hand, t.want)) return 'Someone no longer has the cards';
       for (const r of RESOURCES) {
         pl.hand[r] += t.want[r] - t.give[r];

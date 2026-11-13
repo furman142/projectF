@@ -19,7 +19,9 @@ export class LocalConn implements Conn {
 
   constructor(players: { name: string; color: string; bot: boolean }[], options: Partial<Options>) {
     const state = newGame({ players, seed: (Math.random() * 2 ** 31) | 0, options });
-    this.host = new GameHost(state, { botDelay: 750, onChange: (h) => this.onView(h.view(0)) });
+    // ?debug speeds bots up for automated browser tests.
+    const fast = new URLSearchParams(location.search).has('debug');
+    this.host = new GameHost(state, { botDelay: fast ? 60 : 750, onChange: (h) => this.onView(h.view(0)) });
   }
   start() {
     this.onView(this.host.view(0));
