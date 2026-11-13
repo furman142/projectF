@@ -4,7 +4,7 @@ import type { GameView, ViewPlayer } from '../../shared/view.ts';
 import type { Conn } from '../conn.ts';
 import type { World } from '../scene/world.ts';
 import { CHARTERS, RES_ICON, RES_NAME, describe, esc, resList } from './text.ts';
-import { sfx } from './sound.ts';
+import { music, sfx } from './sound.ts';
 
 type BuildMode = 'bridge' | 'outpost' | 'citadel' | null;
 type Modal = null | 'trade' | 'charters' | 'victim' | 'pick' | 'menu';
@@ -30,6 +30,9 @@ export class Hud {
   private bankGet: Resource | null = null;
   private discard = emptyRes();
   private busy = false;
+  private revealAt = 0;
+  private prevHand: ResMap | null = null;
+  private bumps = new Map<Resource, number>();
   private logOpen = innerWidth > 900;
   private els: Record<'top' | 'banner' | 'log' | 'bottom' | 'modal' | 'toast' | 'fx', HTMLElement>;
 
@@ -46,9 +49,13 @@ export class Hud {
     this.els = { top: q('.hud-top'), banner: q('.banner'), log: q('.log'), bottom: q('.hud-bottom'), modal: q('.modal-layer'), toast: q('.toasts'), fx: q('.fx') };
     root.addEventListener('click', (e) => this.onClick(e));
     conn.onView = (v) => this.update(v);
+    world.fx.onFirework = () => sfx.firework();
+    music.start();
   }
 
   destroy() {
+    music.stop();
+    this.world.fx.onFirework = null;
     this.world.setTargets(null, [], '#fff', null);
     this.root.innerHTML = '';
   }
@@ -71,6 +78,9 @@ export class Hud {
     if (this.modal === 'victim' && v.phase !== 'pirate') this.modal = null;
     if (v.phase !== 'discard') this.discard = emptyRes();
     this.world.update(v);
+    const hand = v.players[v.me]?.hand;
+    if (hand && this.prevHand) for (const r of RESOURCES) if (hand[r] > this.prevHand[r]) this.bumps.set(r, hand[r] - this.prevHand[r]);
+    this.prevHand = hand ? { ...hand } : null;
     if (first) this.lastSeq = v.log.length ? v.log[v.log.length - 1].seq : 0;
     else this.playEvents(v);
     this.render();
@@ -82,39 +92,114 @@ export class Hud {
     const fresh = v.log.filter((e) => e.seq > this.lastSeq);
     if (!fresh.length) return;
     this.lastSeq = fresh[fresh.length - 1].seq;
+    const color = (p: number) => v.players[p]?.color ?? '#fff';
+    // Effects that depend on the dice wait until the 3D dice have landed.
+    let diceDelay = 0;
     for (const { ev } of fresh) {
       switch (ev.type) {
-        case 'roll': sfx.roll(); this.rollDice(ev.dice); break;
-        case 'produce':
-          this.world.flashHexes(ev.gains.map((g) => g.hex));
+        case 'roll': {
+          sfx.roll();
+          this.world.fx.rollDice(ev.dice);
+          this.rollDice();
+          diceDelay = 950;
+          if (ev.dice[0] + ev.dice[1] === 7) {
+            setTimeout(() => { sfx.seven(); this.world.fx.shake(500, 0.16); this.flash('seven'); }, diceDelay);
+          }
+          break;
+        }
+        case 'produce': {
+          const total = v.dice ? v.dice[0] + v.dice[1] : 0;
           setTimeout(() => {
-            ev.gains.forEach((g, i) => this.fly(g.hex, g.player, `${g.n > 1 ? g.n : ''}${RES_ICON[g.res]}`, i * 70));
-            if (ev.gains.some((g) => g.player === this.me)) sfx.coin();
-          }, 500);
+            this.world.bounceTokens(total);
+            this.world.flashHexes(ev.gains.map((g) => g.hex));
+            ev.gains.forEach((g, i) => {
+              this.world.fx.resource(this.world.hexPos(g.hex), RES_ICON[g.res], i * 90);
+              this.fly(g.hex, g.player, `${g.n > 1 ? g.n : ''}${RES_ICON[g.res]}`, 350 + i * 90);
+            });
+            const mine = [...new Set(ev.gains.filter((g) => g.player === this.me).map((g) => g.res))];
+            mine.forEach((r, i) => sfx.resource(r, 0.35 + i * 0.12));
+            if (!mine.length && ev.gains.length) sfx.resource(ev.gains[0].res, 0.35);
+          }, diceDelay);
           break;
-        case 'build': sfx.build(); break;
-        case 'pirate': sfx.pirate(); break;
+        }
+        case 'setupGain':
+          if (ev.player === this.me) ev.res.forEach((r, i) => sfx.resource(r, 0.4 + i * 0.12));
+          break;
+        case 'build': {
+          sfx.build(ev.piece);
+          const pos = ev.piece === 'bridge' ? this.world.edgePos(ev.at) : this.world.vertexPos(ev.at);
+          setTimeout(() => this.world.fx.build(pos, color(ev.player), ev.piece), 380);
+          break;
+        }
+        case 'pirate':
+          sfx.pirate();
+          setTimeout(() => this.world.fx.smoke(this.world.hexPos(ev.hex)), 700);
+          break;
         case 'steal':
-          sfx.steal();
-          if (ev.victim === this.me) this.toast(`${this.name(ev.thief)} stole ${ev.res ? RES_ICON[ev.res] : 'a card'} from you`, 'bad');
-          if (ev.thief === this.me) this.toast(`You stole ${ev.res ? RES_ICON[ev.res] : 'a card'}`, 'good');
+          setTimeout(() => sfx.steal(), 700);
+          if (ev.victim === this.me) this.toast(`☠️ ${this.name(ev.thief)} stole ${ev.res ? RES_ICON[ev.res] : 'a card'} from you`, 'bad');
+          if (ev.thief === this.me) this.toast(`☠️ You stole ${ev.res ? RES_ICON[ev.res] : 'a card'}`, 'good');
           break;
-        case 'turn': if (ev.player === this.me) { sfx.turn(); this.toast('Your turn!', 'good'); } break;
-        case 'buyCharter': if (ev.player === this.me && ev.kind) this.toast(`New charter: ${CHARTERS[ev.kind].icon} ${CHARTERS[ev.kind].name}`, 'good'); break;
-        case 'award': if (ev.player !== null) this.toast(describe(ev, (i) => this.name(i), this.me)!, 'gold'); break;
-        case 'trade': case 'bank': sfx.coin(); break;
-        case 'offer': if (ev.player !== this.me) sfx.click(); break;
-        case 'win': sfx.win(); this.confetti(); break;
+        case 'discard': if (ev.player === this.me) sfx.discard(); break;
+        case 'turn':
+          if (ev.player === this.me) { sfx.turn(); this.toast('Your turn!', 'good'); this.flash('turn'); }
+          break;
+        case 'buyCharter':
+          if (ev.player === this.me) {
+            sfx.charterBuy();
+            if (ev.kind) this.toast(`📜 New charter: ${CHARTERS[ev.kind].icon} ${CHARTERS[ev.kind].name}`, 'good');
+          } else sfx.click();
+          break;
+        case 'playCharter':
+          sfx.charterPlay(ev.kind);
+          if (ev.player !== this.me) this.toast(describe(ev, (i) => this.name(i), this.me)!, 'info');
+          if (ev.kind === 'monopoly' && ev.player !== this.me && ev.res) this.flash('bad');
+          break;
+        case 'award':
+          if (ev.player !== null) {
+            sfx.award();
+            this.bigBanner(`${ev.kind === 'longest' ? '🌉 Longest Sky-Bridge' : '⚔️ Largest Fleet'}`, ev.player === this.me ? 'You get +2 Glory' : `${esc(v.players[ev.player].name)} gets +2 Glory`, color(ev.player));
+          }
+          break;
+        case 'trade': case 'bank': sfx.trade(); break;
+        case 'offer': if (ev.player !== this.me) sfx.offer(); break;
+        case 'win':
+          if (ev.player === this.me) sfx.win(); else sfx.lose();
+          this.world.fx.fireworks(ev.player === this.me ? 6 : 3);
+          this.bigBanner(ev.player === this.me ? '🏆 Victory!' : `🏆 ${esc(v.players[ev.player].name)} wins`, '', color(ev.player));
+          if (ev.player === this.me) this.confetti();
+          break;
         default: break;
       }
     }
   }
 
-  private rollDice(_d: [number, number]) {
-    const el = this.els.top.querySelector('.dice');
-    el?.classList.remove('rolling');
-    void (el as HTMLElement | null)?.offsetWidth;
-    el?.classList.add('rolling');
+  private rollDice() {
+    // Hide the result in the corner until the 3D dice land.
+    this.revealAt = performance.now() + 900;
+    setTimeout(() => {
+      if (this.v) this.renderTop(this.v);
+      const el = this.els.top.querySelector('.dice');
+      el?.classList.remove('rolling');
+      void (el as HTMLElement | null)?.offsetWidth;
+      el?.classList.add('rolling');
+    }, 920);
+  }
+
+  private flash(kind: 'seven' | 'turn' | 'bad') {
+    const f = document.createElement('div');
+    f.className = `flash ${kind}`;
+    this.els.fx.appendChild(f);
+    setTimeout(() => f.remove(), 1200);
+  }
+
+  private bigBanner(title: string, sub: string, color: string) {
+    const b = document.createElement('div');
+    b.className = 'big-banner';
+    b.style.setProperty('--pc', color);
+    b.innerHTML = `<div class="bb-title">${title}</div>${sub ? `<div class="bb-sub">${sub}</div>` : ''}`;
+    this.els.fx.appendChild(b);
+    setTimeout(() => b.remove(), 2600);
   }
 
   private fly(hex: number, player: number, label: string, delay: number) {
@@ -192,6 +277,7 @@ export class Hud {
       case 'close': this.modal = null; this.pickCtx = null; break;
       case 'log': this.logOpen = !this.logOpen; break;
       case 'mute': sfx.toggle(); break;
+      case 'music': music.toggle(); break;
       case 'exit': this.onExit(v.phase === 'over'); return;
       case 'play': {
         const kind = arg as PlayableCharter;
@@ -315,11 +401,12 @@ export class Hud {
         </div>
         <div class="glory" title="Glory">★${p.glory}</div>
       </div>`;
+    const hidden = performance.now() < this.revealAt;
     const dice = v.dice ?? [0, 0];
     this.els.top.innerHTML = `
       <div class="players">${v.players.map(chip).join('')}</div>
       <div class="top-right">
-        <div class="dice ${v.dice ? '' : 'idle'}">${v.dice ? dieHtml(dice[0]) + dieHtml(dice[1]) : dieHtml(6) + dieHtml(6)}</div>
+        <div class="dice ${v.dice && !hidden ? '' : 'idle'}">${v.dice && !hidden ? dieHtml(dice[0]) + dieHtml(dice[1]) : dieHtml(6) + dieHtml(6)}</div>
         <button class="icon-btn" data-act="modal" data-arg="menu" title="Menu">☰</button>
       </div>`;
   }
@@ -361,10 +448,14 @@ export class Hud {
     if (!me) { this.els.bottom.innerHTML = '<div class="actions"><span class="wait">Spectating</span></div>'; return; }
     const hand = this.hand;
     const s = this.asState();
-    const cards = RESOURCES.map((r) => `
-      <div class="card res-${r} ${hand[r] ? '' : 'zero'}" title="${RES_NAME[r]}">
-        <div class="ico">${RES_ICON[r]}</div><div class="n">${hand[r]}</div>
-      </div>`).join('');
+    const cards = RESOURCES.map((r) => {
+      const bump = this.bumps.get(r);
+      return `
+      <div class="card res-${r} ${hand[r] ? '' : 'zero'} ${bump ? 'bump' : ''}" title="${RES_NAME[r]}">
+        <div class="ico">${RES_ICON[r]}</div><div class="n">${hand[r]}</div>${bump ? `<span class="plus">+${bump}</span>` : ''}
+      </div>`;
+    }).join('');
+    this.bumps.clear();
     const charterN = (me.charters?.length ?? 0) + (me.newCharters?.length ?? 0);
 
     let actions = '';
@@ -477,7 +568,8 @@ export class Hud {
     } else if (this.modal === 'menu') {
       html = box('Menu', `
         <div class="choices col">
-          <button class="btn" data-act="mute">${sfx.muted ? '🔇 Sound off' : '🔊 Sound on'}</button>
+          <button class="btn" data-act="mute">${sfx.muted ? '🔇 Sound effects: off' : '🔊 Sound effects: on'}</button>
+          <button class="btn" data-act="music">${music.on ? '🎵 Music: on' : '🎵 Music: off'}</button>
           <button class="btn" data-act="close">▶ Back to game</button>
           <button class="btn bad" data-act="exit">Leave game</button>
         </div>

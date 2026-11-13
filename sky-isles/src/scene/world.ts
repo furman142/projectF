@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Board, Resource, Terrain } from '../../shared/types.ts';
 import type { GameView } from '../../shared/view.ts';
 import { RES_ICON } from '../ui/text.ts';
+import { Effects } from './effects.ts';
 
 export type TargetKind = 'vertex' | 'edge' | 'hex';
 
@@ -172,6 +173,10 @@ export class World {
   private down = { x: 0, y: 0, t: 0 };
   private raycaster = new THREE.Raycaster();
   private clock = new THREE.Clock();
+  private last = 0;
+  private tokenBounce: { t: THREE.Sprite; start: number; base: number }[] = [];
+  private pirateHex = -1;
+  readonly fx: Effects;
 
   constructor(canvas: HTMLCanvasElement) {
     const mobile = matchMedia('(pointer: coarse)').matches;
@@ -205,6 +210,7 @@ export class World {
     this.controls.maxDistance = 20;
     this.controls.target.set(0, 0, 0.4);
     this.camera.position.set(0, 10.5, 8);
+    this.fx = new Effects(this.scene, this.root, this.camera, this.controls.target);
 
     canvas.addEventListener('pointerdown', (e) => (this.down = { x: e.clientX, y: e.clientY, t: performance.now() }));
     canvas.addEventListener('pointerup', (e) => {
@@ -241,7 +247,7 @@ export class World {
     this.boardKey = key;
     this.board = board;
     for (const child of [...this.root.children]) {
-      if (child !== this.piecesGroup && child !== this.targets && child !== this.pirate) this.root.remove(child);
+      if (child !== this.piecesGroup && child !== this.targets && child !== this.pirate && !child.userData.keep) this.root.remove(child);
     }
     this.piecesGroup.clear();
     this.pieces.clear();
@@ -249,6 +255,8 @@ export class World {
     this.tokens = [];
     this.bolt = null;
     this.stormCloud = null;
+    this.pirateHex = -1;
+    this.fx.setBoard(board);
 
     for (const hex of board.hexes) {
       const g = new THREE.Group();
@@ -262,6 +270,7 @@ export class World {
       top.receiveShadow = true;
       top.castShadow = true;
       top.userData.hex = hex.id;
+      top.userData.base = new THREE.Color(TERRAIN_COLOR[hex.terrain]);
       g.add(top);
       this.tops.push(top);
 
@@ -504,6 +513,15 @@ export class World {
     }
     const h = b.hexes[view.pirate];
     this.pirateGoal.set(h.x + 0.05, 1.3, h.z - 0.1);
+    if (this.pirateHex !== view.pirate) {
+      // The island under the pirate falls into shadow.
+      this.tops.forEach((top, i) => {
+        const m = (top.material as THREE.MeshStandardMaterial[])[1];
+        m.color.copy(top.userData.base as THREE.Color);
+        if (i === view.pirate) m.color.multiplyScalar(0.55);
+      });
+      this.pirateHex = view.pirate;
+    }
     this.tokens.forEach((t, i) => t && ((t.material as THREE.SpriteMaterial).opacity = i === view.pirate ? 0.35 : 1));
   }
 
@@ -511,6 +529,29 @@ export class World {
     this.piecesGroup.add(obj);
     this.anims.push({ obj, start: performance.now(), y: obj.position.y });
     obj.scale.setScalar(0.01);
+  }
+
+  hexPos(id: number) {
+    const h = this.board!.hexes[id];
+    return new THREE.Vector3(h.x, 0, h.z);
+  }
+  vertexPos(id: number) {
+    const v = this.board!.vertices[id];
+    return new THREE.Vector3(v.x, 0, v.z);
+  }
+  edgePos(id: number) {
+    const [a, c] = this.board!.edges[id].v.map((i) => this.board!.vertices[i]);
+    return new THREE.Vector3((a.x + c.x) / 2, 0, (a.z + c.z) / 2);
+  }
+
+  /** Number tokens matching the roll jump and glow. */
+  bounceTokens(total: number) {
+    if (!this.board) return;
+    const now = performance.now();
+    for (const h of this.board.hexes) {
+      const t = this.tokens[h.id];
+      if (t && h.number === total) this.tokenBounce.push({ t, start: now, base: t.scale.x });
+    }
   }
 
   /** Briefly lights up islands (e.g. ones that just produced). */
@@ -580,6 +621,8 @@ export class World {
   private frame() {
     const t = this.clock.getElapsedTime();
     const now = performance.now();
+    const dt = Math.min(0.05, t - this.last);
+    this.last = t;
     this.root.position.y = Math.sin(t * 0.7) * 0.05;
     this.controls.update();
 
@@ -621,6 +664,17 @@ export class World {
       this.stormCloud.position.x = Math.sin(t * 0.4) * 0.08;
     }
 
+    this.tokenBounce = this.tokenBounce.filter((b) => {
+      const k = (now - b.start) / 900;
+      const jump = k < 1 ? Math.sin(k * Math.PI) : 0;
+      b.t.scale.setScalar(b.base * (1 + jump * 0.45));
+      b.t.position.y = 0.62 + jump * 0.35;
+      return k < 1;
+    });
+
+    const shake = this.fx.update(dt, t);
+    this.camera.position.add(shake);
     this.renderer.render(this.scene, this.camera);
+    this.camera.position.sub(shake);
   }
 }
