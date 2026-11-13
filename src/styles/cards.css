@@ -1,0 +1,178 @@
+/* A card scales from one variable: --cw (its width). */
+.card {
+  --cw: calc(var(--u) * 21);
+  position: relative;
+  display: block;
+  flex: none;
+  width: var(--cw);
+  aspect-ratio: 5 / 7;
+  border-radius: calc(var(--cw) * 0.1);
+  font-size: calc(var(--cw) * 0.2);
+  font-family: var(--font-card);
+  direction: ltr;
+  background: linear-gradient(155deg, #fffdf6 0%, var(--cream) 45%, var(--cream-lo) 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.9),
+    inset 0 0 0 calc(var(--cw) * 0.035) var(--cream),
+    inset 0 0 0 calc(var(--cw) * 0.045) rgba(60, 40, 10, 0.14),
+    0 1px 1px rgba(0, 0, 0, 0.35),
+    0 calc(var(--cw) * 0.06) calc(var(--cw) * 0.14) rgba(0, 0, 0, 0.38);
+  overflow: hidden;
+}
+
+.card--red {
+  color: var(--red);
+}
+
+.card--black {
+  color: var(--black);
+}
+
+.card .suit {
+  display: block;
+  width: 1em;
+  height: 1em;
+}
+
+.card__corner {
+  position: absolute;
+  top: 7%;
+  left: 9%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.08em;
+  line-height: 0.9;
+}
+
+.card__corner b {
+  font-weight: 900;
+  font-size: 1.25em;
+  letter-spacing: -0.04em;
+}
+
+.card__corner .suit {
+  font-size: 0.8em;
+}
+
+.card__corner--br {
+  top: auto;
+  left: auto;
+  right: 9%;
+  bottom: 7%;
+  transform: rotate(180deg);
+}
+
+.card__pip {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 2.3em;
+  filter: drop-shadow(0 0.03em 0.02em rgba(0, 0, 0, 0.2));
+}
+
+/* ---------- Joker ---------- */
+
+.card--joker {
+  color: var(--gold);
+  background:
+    radial-gradient(120% 80% at 50% 20%, rgba(138, 92, 255, 0.55) 0%, transparent 60%),
+    radial-gradient(90% 60% at 50% 100%, rgba(255, 79, 163, 0.45) 0%, transparent 70%),
+    linear-gradient(160deg, #2c1650 0%, #1a0c33 55%, #12071f 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(244, 207, 122, 0.9),
+    inset 0 0 0 calc(var(--cw) * 0.035) #1a0c33,
+    inset 0 0 0 calc(var(--cw) * 0.047) rgba(244, 207, 122, 0.55),
+    0 1px 1px rgba(0, 0, 0, 0.35),
+    0 calc(var(--cw) * 0.06) calc(var(--cw) * 0.14) rgba(0, 0, 0, 0.45);
+}
+
+.card__jester {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25em;
+  filter: drop-shadow(0 0 0.35em rgba(244, 207, 122, 0.55));
+}
+
+.card__jester svg {
+  width: 2.5em;
+  height: 2.5em;
+}
+
+.card__jester em {
+  font-style: normal;
+  font-weight: 900;
+  font-size: 0.62em;
+  letter-spacing: 0.22em;
+  margin-right: -0.22em;
+}
+
+.card__shine {
+  position: absolute;
+  inset: -40%;
+  background: linear-gradient(115deg, transparent 42%, rgba(255, 255, 255, 0.28) 50%, transparent 58%);
+  animation: joker-shine 3.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes joker-shine {
+  0%,
+  55% {
+    transform: translateX(-60%);
+  }
+  100% {
+    transform: translateX(60%);
+  }
+}
+
+/* ---------- Back ---------- */
+
+.card--back {
+  background:
+    radial-gradient(circle at 50% 50%, var(--gold) 0 7%, transparent 7.5%),
+    radial-gradient(circle at 50% 50%, #5d1423 0 15%, transparent 15.5%),
+    repeating-linear-gradient(45deg, rgba(244, 207, 122, 0.2) 0 1px, transparent 1px calc(var(--cw) * 0.12)),
+    repeating-linear-gradient(-45deg, rgba(244, 207, 122, 0.2) 0 1px, transparent 1px calc(var(--cw) * 0.12)),
+    linear-gradient(160deg, #a02a40 0%, #6d1727 60%, #4c0e1b 100%);
+  box-shadow:
+    inset 0 0 0 calc(var(--cw) * 0.05) var(--cream),
+    inset 0 0 0 calc(var(--cw) * 0.07) rgba(244, 207, 122, 0.75),
+    0 1px 1px rgba(0, 0, 0, 0.35),
+    0 calc(var(--cw) * 0.06) calc(var(--cw) * 0.14) rgba(0, 0, 0, 0.4);
+}
+
+/* ---------- Flying cards during a pass ---------- */
+
+.flyer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 50;
+  pointer-events: none;
+  perspective: 600px;
+  will-change: transform;
+}
+
+.flyer__inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+}
+
+.flyer .card {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.flyer .card--back.is-flip {
+  transform: rotateY(180deg);
+}

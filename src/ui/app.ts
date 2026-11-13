@@ -1,0 +1,351 @@
+import { chooseBotPass, createBotMemory, observePass, type BotMemory } from '../game/bot';
+import { fourOfAKindRank } from '../game/deck';
+import { reduce } from '../game/engine';
+import { canCall, hasJoker, isJokerLocked, playersWhoCanCall, rightOf } from '../game/rules';
+import { createMatch, isEliminated, matchWinner } from '../game/score';
+import type { Card, MatchState, PlayerId, RoundState } from '../game/types';
+import { wait } from './dom';
+import { gameOverBody, homeScreen, openSheet, pauseBody, roundEndBody, rulesBody, settingsBody, type Sheet } from './screens';
+import { setSoundEnabled, sfx, vibrate } from './sound';
+import { loadSettings, saveSettings, type Settings } from './storage';
+import { TableView } from './table';
+
+const HUMAN: PlayerId = 'you';
+const BOT_NAMES = ['נועה', 'איתי', 'מאיה', 'עומר', 'תמר'];
+const rng = Math.random;
+const between = (min: number, max: number) => min + rng() * (max - min);
+
+type Phase = 'idle' | 'dealing' | 'choosing' | 'passing' | 'over';
+
+interface InstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+}
+
+/** Wires the pure game engine to the views: timing, bots, sounds, screens. */
+export class App {
+  private settings: Settings = loadSettings();
+  private match: MatchState | null = null;
+  private memory: Record<PlayerId, BotMemory> = {};
+  private view: TableView | null = null;
+  private phase: Phase = 'idle';
+  private selected: string | null = null;
+  private timers = new Set<number>();
+  private pendingCallers = new Set<PlayerId>();
+  private paused = false;
+  private deferred: (() => void)[] = [];
+  private installPrompt: InstallPromptEvent | null = null;
+
+  constructor(private readonly root: HTMLElement) {
+    setSoundEnabled(this.settings.sound);
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      this.installPrompt = e as InstallPromptEvent;
+      if (this.phase === 'idle' && !this.root.querySelector('.backdrop')) this.showHome();
+    });
+    this.showHome();
+  }
+
+  // ---------- Screens ----------
+
+  private setScreen(el: HTMLElement): void {
+    this.root.replaceChildren(el);
+  }
+
+  private showHome(): void {
+    this.clearTimers();
+    this.phase = 'idle';
+    this.match = null;
+    this.view = null;
+    this.setScreen(
+      homeScreen(this.settings, {
+        onPlay: () => {
+          sfx.tap();
+          this.startMatch();
+        },
+        onSettings: () => this.showSettings(),
+        onRules: () => this.showRules(),
+        onInstall: this.installPrompt
+          ? () => {
+              void this.installPrompt?.prompt();
+              this.installPrompt = null;
+              this.showHome();
+            }
+          : null,
+      }),
+    );
+  }
+
+  private updateSettings(patch: Partial<Settings>): void {
+    this.settings = { ...this.settings, ...patch };
+    saveSettings(this.settings);
+    setSoundEnabled(this.settings.sound);
+    this.view?.setSound(this.settings.sound);
+    if (patch.sound) sfx.tap();
+  }
+
+  private showSettings(): void {
+    const done = () => void sheet.close().then(() => this.showHome());
+    const sheet: Sheet = openSheet(this.root, {
+      title: 'הגדרות',
+      body: settingsBody(this.settings, (patch) => this.updateSettings(patch), done),
+      onDismiss: () => this.showHome(),
+    });
+  }
+
+  private showRules(after?: () => void): void {
+    const sheet: Sheet = openSheet(this.root, {
+      title: 'איך משחקים',
+      body: rulesBody(() => void sheet.close().then(after)),
+      onDismiss: () => after?.(),
+    });
+  }
+
+  private showPause(): void {
+    if (this.paused) return;
+    this.paused = true;
+    const resume = () => {
+      this.paused = false;
+      for (const fn of this.deferred.splice(0)) fn();
+    };
+    const sheet: Sheet = openSheet(this.root, {
+      title: 'הפסקה',
+      body: pauseBody(this.settings.sound, {
+        onSound: (sound) => this.updateSettings({ sound }),
+        onResume: () => void sheet.close().then(resume),
+        onRules: () => void sheet.close().then(() => this.showRules(resume)),
+        onQuit: () =>
+          void sheet.close().then(() => {
+            this.paused = false;
+            this.deferred = [];
+            this.showHome();
+          }),
+      }),
+      onDismiss: resume,
+    });
+  }
+
+  // ---------- Timers (paused while the menu is open) ----------
+
+  private later(ms: number, fn: () => void): void {
+    const id = window.setTimeout(() => {
+      this.timers.delete(id);
+      if (this.paused) this.deferred.push(fn);
+      else fn();
+    }, ms);
+    this.timers.add(id);
+  }
+
+  private clearTimers(): void {
+    for (const id of this.timers) clearTimeout(id);
+    this.timers.clear();
+    this.pendingCallers.clear();
+    this.deferred = [];
+  }
+
+  // ---------- Match flow ----------
+
+  private get round(): RoundState {
+    return this.match!.round!;
+  }
+
+  private startMatch(): void {
+    const bots = BOT_NAMES.slice(0, this.settings.players - 1);
+    this.match = createMatch([
+      { id: HUMAN, name: 'אתם', isHuman: true },
+      ...bots.map((name, i) => ({ id: `bot${i + 1}`, name, isHuman: false })),
+    ]);
+    this.view = new TableView(HUMAN, {
+      onCardTap: (id) => this.tapCard(id),
+      onPass: () => void this.pass(),
+      onCall: () => void this.call(HUMAN),
+      onMenu: () => this.showPause(),
+      onToggleSound: () => this.updateSettings({ sound: !this.settings.sound }),
+    });
+    this.view.setSound(this.settings.sound);
+    this.setScreen(this.view.el);
+    this.startRound();
+  }
+
+  private startRound(): void {
+    const view = this.view!;
+    this.clearTimers();
+    this.match = reduce(this.match!, { type: 'startRound' }, rng);
+    this.memory = Object.fromEntries(this.round.order.filter((id) => id !== HUMAN).map((id) => [id, createBotMemory()]));
+    this.phase = 'dealing';
+    this.selected = null;
+    view.setRound(this.match.roundNumber, this.round.order.length);
+    view.renderSeats(this.match, true);
+    view.renderHand(this.round, { dealing: true });
+    view.setActions({ canPass: false, canCall: false });
+    view.setStatus('מחלקים קלפים…');
+    sfx.deal(this.round.hands[HUMAN].length);
+    this.later(950, () => {
+      if (hasJoker(this.round.hands[HUMAN])) this.announceJoker();
+      this.beginTurn();
+    });
+  }
+
+  private announceJoker(): void {
+    sfx.joker();
+    vibrate([60, 40, 120]);
+  }
+
+  /** Everyone now picks a card. Bots that can call start their countdown. */
+  private beginTurn(): void {
+    const view = this.view!;
+    const round = this.round;
+    this.phase = 'choosing';
+    this.selected = null;
+    view.setSelection(null);
+    view.clearReady();
+
+    const mine = round.hands[HUMAN];
+    const live = canCall(round, HUMAN);
+    view.setActions({ canPass: false, canCall: live });
+    if (live) {
+      view.setStatus('יש לכם רביעייה! לחצו מהר');
+      sfx.ready();
+      vibrate(80);
+    } else if (fourOfAKindRank(mine)) {
+      view.setStatus('רביעייה ביד, אבל קודם צריך להיפטר מהג׳וקר');
+    } else {
+      view.setStatus('בחרו קלף להעברה');
+    }
+
+    const fast = this.settings.difficulty === 'hard';
+    for (const id of playersWhoCanCall(round)) {
+      if (id === HUMAN) continue;
+      this.pendingCallers.add(id);
+      this.later(fast ? between(500, 1300) : between(1100, 2000), () => void this.call(id));
+    }
+    for (const id of round.order) {
+      if (id === HUMAN) continue;
+      this.later(between(450, 1900), () => {
+        if (this.phase === 'choosing') view.setReady(id, true);
+      });
+    }
+  }
+
+  private tapCard(cardId: string): void {
+    if (this.phase !== 'choosing') return;
+    const view = this.view!;
+    const card = this.round.hands[HUMAN].find((c) => c.id === cardId);
+    if (!card) return;
+    if (card.kind === 'joker' && isJokerLocked(this.round, HUMAN)) {
+      view.shake(cardId);
+      view.toast('הג׳וקר נעול: חייבים להחזיק אותו סיבוב אחד');
+      sfx.error();
+      vibrate(40);
+      return;
+    }
+    this.selected = this.selected === cardId ? null : cardId;
+    if (this.selected) sfx.tap();
+    else sfx.deselect();
+    vibrate(10);
+    view.setSelection(this.selected);
+    view.setActions({ canPass: this.selected !== null, canCall: canCall(this.round, HUMAN) });
+  }
+
+  private async pass(): Promise<void> {
+    if (this.phase !== 'choosing' || !this.selected) return;
+    // A bot that already has four of a kind gets its call in before the pass.
+    const [waiting] = this.pendingCallers;
+    if (waiting) return this.call(waiting);
+
+    const view = this.view!;
+    const prev = this.round;
+    const picks: Record<PlayerId, Card> = {};
+    for (const id of prev.order) {
+      picks[id] =
+        id === HUMAN
+          ? prev.hands[HUMAN].find((c) => c.id === this.selected)!
+          : chooseBotPass(prev, id, this.settings.difficulty, this.memory[id], rng);
+    }
+
+    this.phase = 'passing';
+    this.clearTimers();
+    for (const id of prev.order) view.setReady(id, true);
+    view.setActions({ canPass: false, canCall: false });
+    view.setStatus('מעבירים שמאלה…');
+    sfx.pass();
+
+    this.match = reduce(this.match!, { type: 'pass', passes: Object.fromEntries(prev.order.map((id) => [id, picks[id].id])) }, rng);
+    const next = this.round;
+    for (const id of prev.order) {
+      if (id === HUMAN) continue;
+      this.memory[id] = observePass(this.memory[id], {
+        turn: prev.turn,
+        passed: picks[id],
+        received: picks[rightOf(prev, id)],
+        handAfter: next.hands[id],
+      });
+    }
+
+    await view.animatePass(prev, next, picks);
+    if (this.view !== view || this.phase !== 'passing') return; // left the game mid-animation
+
+    const received = picks[rightOf(prev, HUMAN)];
+    if (received.kind === 'joker') {
+      this.announceJoker();
+      view.toast('קיבלתם את הג׳וקר!');
+    } else {
+      sfx.reveal();
+    }
+    this.beginTurn();
+  }
+
+  private async call(caller: PlayerId): Promise<void> {
+    if (this.phase !== 'choosing' || !canCall(this.round, caller)) return;
+    const view = this.view!;
+    this.phase = 'over';
+    this.clearTimers();
+    this.match = reduce(this.match!, { type: 'call', player: caller }, rng);
+    const match = this.match;
+    const { loser } = this.round.result!;
+    const name = (id: PlayerId) => match.players.find((p) => p.id === id)!.name;
+
+    view.setActions({ canPass: false, canCall: false });
+    view.setSelection(null);
+    view.markResult(caller, loser);
+    view.setStatus(caller === HUMAN ? 'רביעייה שלכם!' : `רביעייה של ${name(caller)}!`);
+    if (loser === HUMAN) {
+      sfx.lose();
+      vibrate([120, 60, 220]);
+    } else {
+      sfx.call();
+      vibrate(caller === HUMAN ? [40, 40, 40, 40, 160] : 60);
+    }
+    await view.burst(
+      'רביעייה!',
+      caller === HUMAN ? 'הכרזתם בזמן' : loser === HUMAN ? `${name(caller)} · והג׳וקר אצלכם` : name(caller),
+      loser === HUMAN,
+    );
+    if (this.view !== view) return;
+    await wait(100);
+    this.showRoundEnd();
+  }
+
+  private showRoundEnd(): void {
+    const match = this.match!;
+    const me = match.players.find((p) => p.id === HUMAN)!;
+    const finished = isEliminated(me) || matchWinner(match) !== null;
+    const sheet: Sheet = openSheet(this.root, {
+      body: roundEndBody(match, HUMAN, finished ? 'לתוצאות' : 'סיבוב הבא', () => {
+        sfx.tap();
+        void sheet.close().then(() => (finished ? this.showGameOver() : this.startRound()));
+      }),
+    });
+  }
+
+  private showGameOver(): void {
+    const match = this.match!;
+    const won = matchWinner(match)?.id === HUMAN;
+    if (won) sfx.win();
+    const sheet: Sheet = openSheet(this.root, {
+      body: gameOverBody(match, HUMAN, won, {
+        onAgain: () => void sheet.close().then(() => this.startMatch()),
+        onHome: () => void sheet.close().then(() => this.showHome()),
+      }),
+    });
+  }
+}
