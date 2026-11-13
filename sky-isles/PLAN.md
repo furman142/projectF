@@ -91,8 +91,8 @@ Each milestone ends with `npm test` and `npm run build` passing, then a commit.
 
 ## 6. Current status
 
-- Done: `sky-isles/` folder with package.json (three, ws, tsx, vite, vitest), tsconfig, vite config (proxies `/ws` to the server on port 8787), index.html shell, favicon.
-- Next: milestone 1 — write `shared/types.ts`, `shared/board.ts`, `shared/engine.ts` and their tests.
+- Done: milestones 1–5 and most of 6. Rules engine with tests, bots, 3D client playable offline vs bots, online rooms with lobby, bots, reconnect and away-takeover. Sounds, dice and resource animations, confetti, phone layout.
+- Not done yet: turn timer option, trade counter-offers, end-screen stats beyond the dice histogram, deployment (milestone 7), PWA/offline install.
 
 ## 7. Commands
 

@@ -42,6 +42,7 @@ export class NetConn implements Conn {
   onStatus: (connected: boolean) => void = () => {};
   seat = -1;
   code = '';
+  lastLobby: LobbyInfo | null = null;
   private ws: WebSocket | null = null;
   private nextId = 1;
   private pending = new Map<number, (e: string | null) => void>();

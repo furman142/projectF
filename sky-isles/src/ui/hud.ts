@@ -33,7 +33,7 @@ export class Hud {
   private logOpen = innerWidth > 900;
   private els: Record<'top' | 'banner' | 'log' | 'bottom' | 'modal' | 'toast' | 'fx', HTMLElement>;
 
-  constructor(private root: HTMLElement, private world: World, private conn: Conn, private onExit: () => void) {
+  constructor(private root: HTMLElement, private world: World, private conn: Conn, private onExit: (gameOver: boolean) => void) {
     root.innerHTML = `
       <div class="hud-top"></div>
       <div class="banner"></div>
@@ -66,6 +66,7 @@ export class Hud {
     const first = this.v === null;
     this.v = v;
     if (v.phase !== 'main' || !this.myTurn) this.mode = null;
+    if (this.mode && !canAfford(this.hand, COSTS[this.mode])) this.mode = null;
     if (this.modal === 'trade' && (!this.myTurn || v.phase !== 'main')) this.modal = null;
     if (this.modal === 'victim' && v.phase !== 'pirate') this.modal = null;
     if (v.phase !== 'discard') this.discard = emptyRes();
@@ -191,7 +192,7 @@ export class Hud {
       case 'close': this.modal = null; this.pickCtx = null; break;
       case 'log': this.logOpen = !this.logOpen; break;
       case 'mute': sfx.toggle(); break;
-      case 'exit': this.onExit(); return;
+      case 'exit': this.onExit(v.phase === 'over'); return;
       case 'play': {
         const kind = arg as PlayableCharter;
         if (kind === 'plenty' || kind === 'monopoly') { this.pickCtx = { kind, picked: [] }; this.modal = 'pick'; }
@@ -379,7 +380,7 @@ export class Hud {
           : `<span class="wait">${answered ? 'You accepted — waiting…' : 'You declined'}</span>`}
       </div>`;
     } else if (v.phase === 'over') {
-      actions = `<button class="btn primary" data-act="exit">Main menu</button>`;
+      actions = `<button class="btn primary" data-act="exit">${this.conn.online ? 'Continue' : 'Main menu'}</button>`;
     } else if (this.myTurn && v.phase === 'roll') {
       actions = `<button class="btn primary big" data-act="roll">🎲 Roll</button>${charterN ? `<button class="btn" data-act="modal" data-arg="charters">📜 Charters</button>` : ''}`;
     } else if (this.myTurn && v.phase === 'main') {
@@ -494,7 +495,7 @@ export class Hud {
           <div class="res-row ${i === v.winner ? 'win' : ''}"><span style="color:${p.color}">${esc(p.name)}</span><b>★${p.glory}</b></div>`).join('')}</div>
         <h4>Dice rolls</h4>
         <div class="hist">${v.rolls.slice(2).map((n, i) => `<div><i style="height:${(n / maxRoll) * 100}%"></i><span>${i + 2}</span></div>`).join('')}</div>
-        <button class="btn primary wide" data-act="exit">Main menu</button>`, false);
+        <button class="btn primary wide" data-act="exit">${this.conn.online ? 'Back to lobby' : 'Main menu'}</button>`, false);
     }
     this.els.modal.innerHTML = html;
     this.els.modal.classList.toggle('show', !!html);

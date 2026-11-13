@@ -2,7 +2,7 @@ import type { Action, Options } from './types.ts';
 import type { GameView } from './view.ts';
 
 export interface SeatInfo { name: string; color: string; bot: boolean; connected: boolean }
-export interface LobbyInfo { code: string; seats: SeatInfo[]; host: number; options: Options; started: boolean }
+export interface LobbyInfo { code: string; seats: SeatInfo[]; host: number; you: number; options: Options; started: boolean }
 
 export type ClientMsg =
   | { t: 'create'; name: string }

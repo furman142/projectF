@@ -23,7 +23,7 @@ export class GameHost {
   constructor(state: GameState, private opts: HostOptions = {}) {
     this.state = state;
     state.players.forEach((p, i) => p.bot && this.auto.add(i));
-    this.connected = state.players.map((p) => !p.bot);
+    this.connected = state.players.map(() => true);
   }
 
   act(player: number, action: Action): { ok: true } | { ok: false; error: string } {

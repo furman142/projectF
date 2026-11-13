@@ -276,6 +276,7 @@ export class World {
       if (hex.number) {
         const t = numberToken(hex.number);
         t.position.set(0, 0.62, 0);
+        if (innerWidth < innerHeight) t.scale.setScalar(0.62);
         g.add(t);
         this.tokens[hex.id] = t;
       }
